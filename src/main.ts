@@ -1,5 +1,6 @@
 import WebMap from "@arcgis/core/WebMap";
 import GeoJSONLayer from "@arcgis/core/layers/GeoJSONLayer";
+import { CustomContent } from "@arcgis/core/popup/content";
 import request from "@arcgis/core/request";
 import "@arcgis/map-components/components/arcgis-map";
 import "@esri/calcite-components/components/calcite-shell";
@@ -87,16 +88,38 @@ async function nwsPointsRequest(): Promise<void> {
     url,
     popupEnabled: true,
     popupTemplate: {
-      title: "{name}",
+      title: "{name} ({stationIdentifier})",
       content: [
-        {
-          type: "fields",
-          fieldInfos: Object.keys(
-            observationStationsRequest.data.features[0].properties,
-          ).map((key) => ({
-            fieldName: key,
-          })),
-        },
+        new CustomContent({
+          outFields: ["icon", "temperature_value", "textDescription"],
+          creator: async (event) => {
+            const attributes = event.graphic.attributes;
+
+            const list = document.createElement("calcite-list");
+
+            const currentConditionsListItem =
+              document.createElement("calcite-list-item");
+
+            currentConditionsListItem.label = "Current Conditions";
+            currentConditionsListItem.description = attributes.textDescription
+              ? attributes.textDescription
+              : "Unknown";
+
+            const img = document.createElement("img");
+            img.src = attributes.icon;
+            img.slot = "content-start";
+            currentConditionsListItem.appendChild(img);
+
+            const temperatureDiv = document.createElement("div");
+            temperatureDiv.textContent = `Temperature: ${attributes.temperature_value ? attributes.temperature_value : "Unknown"}°C`;
+            temperatureDiv.slot = "content-end";
+            currentConditionsListItem.appendChild(temperatureDiv);
+
+            list.appendChild(currentConditionsListItem);
+
+            return list;
+          },
+        }),
       ],
     },
   });
