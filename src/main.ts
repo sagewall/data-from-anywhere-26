@@ -9,28 +9,36 @@ import "@arcgis/map-components/components/arcgis-search";
 import "@esri/calcite-components/components/calcite-shell";
 import "./style.css";
 
+// Get a reference to the arcgis-map element
 const viewElement = document.querySelector(
   "arcgis-map",
 )! as HTMLArcgisMapElement;
 
+// Create a WebMap instance
 const webMap = new WebMap({
   basemap: "topo-vector",
 });
 
+// Set the map on the view element
 viewElement.map = webMap;
 
+// Set zoom constraints
 viewElement.constraints.minZoom = 9;
 viewElement.constraints.maxZoom = 15;
 
+// Wait for the view to be ready before making requests
 await viewElement.viewOnReady();
 
+// Event listener for when the view extent changes
 viewElement.addEventListener("arcgisViewChange", () => {
   if (viewElement.stationary) {
     nwsPointsRequest();
   }
 });
 
+// Function to handle NWS Points request and subsequent data processing
 async function nwsPointsRequest(): Promise<void> {
+  // Request NWS Points data based on the current center of the view
   const nwsPointsRequest = await request(
     `https://api.weather.gov/points/${viewElement.center.latitude},${viewElement.center.longitude}`,
     {
@@ -40,7 +48,7 @@ async function nwsPointsRequest(): Promise<void> {
       },
     },
   );
-
+  // Request observation stations from the NWS Points data
   const observationStationsRequest = await request(
     nwsPointsRequest.data.properties.observationStations,
     {
@@ -51,12 +59,15 @@ async function nwsPointsRequest(): Promise<void> {
     },
   );
 
+  // Deep clone the data to avoid mutating the original response
   const data = structuredClone(observationStationsRequest.data);
 
+  // Process each feature to get latest observations and forecast data
   const allFeaturePromises = data.features.map(async (feature: any) => {
     const processedProperties = processProperties(feature.properties);
     feature.properties = processedProperties;
 
+    // Request latest observations for the station
     const requestLatestObservations = async () => {
       try {
         const observations = await request(
@@ -84,6 +95,7 @@ async function nwsPointsRequest(): Promise<void> {
       }
     };
 
+    // Request forecast data for the station
     const requestForecast = async () => {
       try {
         const points = await request(
@@ -112,18 +124,26 @@ async function nwsPointsRequest(): Promise<void> {
         console.error("Failed to process forecast for feature", feature, err);
       }
     };
+
+    // Execute both requests in parallel
     await Promise.all([requestLatestObservations(), requestForecast()]);
   });
+
+  // Wait for all feature data to be requested and processed
   await Promise.all(allFeaturePromises);
 
+  // Create a Blob from the processed data
   const blob = new Blob([JSON.stringify(data)], {
     type: "application/geo+json",
   });
 
+  // Create a URL for the Blob
   const url = URL.createObjectURL(blob);
 
+  // Remove existing layers before adding the new one
   viewElement.map?.layers.removeAll();
 
+  // Create a new GeoJSONLayer with the processed data
   const observationStationsLayer = new GeoJSONLayer({
     copyright: "NWS",
     popupEnabled: true,
@@ -226,9 +246,11 @@ async function nwsPointsRequest(): Promise<void> {
     url,
   });
 
+  // Add the new layer to the map
   viewElement.map?.layers.add(observationStationsLayer);
 }
 
+// Recursive function to process properties as some are nested objects or arrays
 function processProperties(object: any, prefix = ""): any {
   const result: any = {};
   for (const [key, value] of Object.entries(object)) {
