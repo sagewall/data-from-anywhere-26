@@ -115,8 +115,6 @@ async function nwsPointsRequest(): Promise<void> {
   });
   await Promise.all(allFeaturePromises);
 
-  console.log("Processed Observation Station Data:", data);
-
   const blob = new Blob([JSON.stringify(data)], {
     type: "application/geo+json",
   });
@@ -133,7 +131,29 @@ async function nwsPointsRequest(): Promise<void> {
       title: "{name} ({stationIdentifier})",
       content: [
         new CustomContent({
-          outFields: ["icon", "temperature_value", "textDescription"],
+          outFields: [
+            "icon",
+            "temperature_value",
+            "textDescription",
+            "periods_0_name",
+            "periods_0_detailedForecast",
+            "periods_0_icon",
+            "periods_1_name",
+            "periods_1_detailedForecast",
+            "periods_1_icon",
+            "periods_2_name",
+            "periods_2_detailedForecast",
+            "periods_2_icon",
+            "periods_3_name",
+            "periods_3_detailedForecast",
+            "periods_3_icon",
+            "periods_4_name",
+            "periods_4_detailedForecast",
+            "periods_4_icon",
+            "periods_5_name",
+            "periods_5_detailedForecast",
+            "periods_5_icon",
+          ],
           creator: async (event) => {
             const attributes = event.graphic.attributes;
 
@@ -141,23 +161,54 @@ async function nwsPointsRequest(): Promise<void> {
 
             const currentConditionsListItem =
               document.createElement("calcite-list-item");
-
             currentConditionsListItem.label = "Current Conditions";
-            currentConditionsListItem.description = attributes.textDescription
+            const temperature = attributes.temperature_value
+              ? (attributes.temperature_value * 9) / 5 + 32
+              : "";
+            const textDescription = attributes.textDescription
               ? attributes.textDescription
-              : "Unknown";
+              : "";
+            const description = `${textDescription ? textDescription + ", " : ""}${temperature ? temperature.toFixed(1) + " °F" : ""}`;
+            currentConditionsListItem.description = description;
 
-            const img = document.createElement("img");
-            img.src = attributes.icon;
-            img.slot = "content-start";
-            currentConditionsListItem.appendChild(img);
-
-            const temperatureDiv = document.createElement("div");
-            temperatureDiv.textContent = `Temperature: ${attributes.temperature_value ? attributes.temperature_value : "Unknown"}°C`;
-            temperatureDiv.slot = "content-end";
-            currentConditionsListItem.appendChild(temperatureDiv);
+            if (attributes.icon) {
+              const img = document.createElement("img");
+              img.src = attributes.icon;
+              img.alt = attributes.textDescription
+                ? attributes.textDescription
+                : "Current Conditions Icon";
+              img.style.maxWidth = "50px";
+              img.slot = "content-start";
+              currentConditionsListItem.appendChild(img);
+            }
 
             list.appendChild(currentConditionsListItem);
+
+            for (let i = 0; i < 6; i++) {
+              const forecastListItem =
+                document.createElement("calcite-list-item");
+              forecastListItem.label = attributes[`periods_${i}_name`]
+                ? attributes[`periods_${i}_name`]
+                : `Period ${i + 1}`;
+              forecastListItem.description = attributes[
+                `periods_${i}_detailedForecast`
+              ]
+                ? attributes[`periods_${i}_detailedForecast`]
+                : "No forecast available";
+
+              if (attributes[`periods_${i}_icon`]) {
+                const img = document.createElement("img");
+                img.src = attributes[`periods_${i}_icon`];
+                img.alt = attributes[`periods_${i}_detailedForecast`]
+                  ? attributes[`periods_${i}_detailedForecast`]
+                  : `Icon for Period ${i + 1}`;
+                img.style.maxWidth = "50px";
+                img.slot = "content-start";
+                forecastListItem.appendChild(img);
+              }
+
+              list.appendChild(forecastListItem);
+            }
 
             return list;
           },
