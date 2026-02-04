@@ -5,6 +5,7 @@ import SimpleRenderer from "@arcgis/core/renderers/SimpleRenderer";
 import request from "@arcgis/core/request";
 import WebStyleSymbol from "@arcgis/core/symbols/WebStyleSymbol";
 import "@arcgis/map-components/components/arcgis-map";
+import "@arcgis/map-components/components/arcgis-search";
 import "@esri/calcite-components/components/calcite-shell";
 import "./style.css";
 
