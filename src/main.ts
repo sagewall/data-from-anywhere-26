@@ -169,7 +169,7 @@ async function nwsPointsRequest(): Promise<void> {
             const textDescription = attributes.textDescription
               ? attributes.textDescription
               : "";
-            const description = `${textDescription ? textDescription + ", " : ""}${temperature ? temperature.toFixed(1) + " °F" : ""}`;
+            const description = `${textDescription ? textDescription + " " : "Unknown "}${temperature ? temperature.toFixed(1) + " °F" : ""}`;
             currentConditionsListItem.description = description;
 
             if (attributes.icon) {
