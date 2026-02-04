@@ -22,12 +22,12 @@ const webMap = new WebMap({
 // Set the map on the view element
 viewElement.map = webMap;
 
+// Wait for the view to be ready
+await viewElement.viewOnReady();
+
 // Set zoom constraints
 viewElement.constraints.minZoom = 9;
 viewElement.constraints.maxZoom = 15;
-
-// Wait for the view to be ready before making requests
-await viewElement.viewOnReady();
 
 // Event listener for when the view extent changes
 viewElement.addEventListener("arcgisViewChange", () => {
