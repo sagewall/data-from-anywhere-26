@@ -1,9 +1,9 @@
-import WebMap from "@arcgis/core/WebMap";
-import GeoJSONLayer from "@arcgis/core/layers/GeoJSONLayer";
-import { CustomContent } from "@arcgis/core/popup/content";
-import SimpleRenderer from "@arcgis/core/renderers/SimpleRenderer";
-import request from "@arcgis/core/request";
-import WebStyleSymbol from "@arcgis/core/symbols/WebStyleSymbol";
+import WebMap from "@arcgis/core/WebMap.js";
+import GeoJSONLayer from "@arcgis/core/layers/GeoJSONLayer.js";
+import CustomContent from "@arcgis/core/popup/content/CustomContent.js";
+import SimpleRenderer from "@arcgis/core/renderers/SimpleRenderer.js";
+import request from "@arcgis/core/request.js";
+import WebStyleSymbol from "@arcgis/core/symbols/WebStyleSymbol.js";
 import "@arcgis/map-components/components/arcgis-map";
 import "@arcgis/map-components/components/arcgis-search";
 import "@esri/calcite-components/components/calcite-shell";
