@@ -21,6 +21,8 @@ viewElement.map = webMap;
 viewElement.constraints.minZoom = 9;
 viewElement.constraints.maxZoom = 15;
 
+await viewElement.viewOnReady();
+
 viewElement.addEventListener("arcgisViewChange", () => {
   if (viewElement.stationary) {
     nwsPointsRequest();
@@ -48,11 +50,14 @@ async function nwsPointsRequest(): Promise<void> {
     },
   );
 
-  await Promise.all(
-    observationStationsRequest.data.features.map(async (feature: any) => {
+  const data = structuredClone(observationStationsRequest.data);
+
+  const allFeaturePromises = data.features.map(async (feature: any) => {
+    const processedProperties = processProperties(feature.properties);
+    feature.properties = processedProperties;
+
+    const requestLatestObservations = async () => {
       try {
-        const processedProperties = processProperties(feature.properties);
-        feature.properties = processedProperties;
         const observations = await request(
           `https://api.weather.gov/stations/${processedProperties.stationIdentifier}/observations/latest`,
           {
@@ -62,22 +67,57 @@ async function nwsPointsRequest(): Promise<void> {
             },
           },
         );
-
         const processedObservationProperties = processProperties(
           observations.data.properties,
         );
-
         feature.properties = {
           ...feature.properties,
           ...processedObservationProperties,
         };
       } catch (err) {
-        console.error("Failed to process feature", feature, err);
+        console.error(
+          "Failed to process observation for feature",
+          feature,
+          err,
+        );
       }
-    }),
-  );
+    };
 
-  const blob = new Blob([JSON.stringify(observationStationsRequest.data)], {
+    const requestForecast = async () => {
+      try {
+        const points = await request(
+          `https://api.weather.gov/points/${feature.geometry.coordinates[1]},${feature.geometry.coordinates[0]}`,
+          {
+            headers: {
+              accept: "application/geo+json",
+              "User-Agent": "data-from-anywhere-26",
+            },
+          },
+        );
+        const forecast = await request(points.data.properties.forecast, {
+          headers: {
+            accept: "application/geo+json",
+            "User-Agent": "data-from-anywhere-26",
+          },
+        });
+        const processedForecastProperties = processProperties(
+          forecast.data.properties,
+        );
+        feature.properties = {
+          ...feature.properties,
+          ...processedForecastProperties,
+        };
+      } catch (err) {
+        console.error("Failed to process forecast for feature", feature, err);
+      }
+    };
+    await Promise.all([requestLatestObservations(), requestForecast()]);
+  });
+  await Promise.all(allFeaturePromises);
+
+  console.log("Processed Observation Station Data:", data);
+
+  const blob = new Blob([JSON.stringify(data)], {
     type: "application/geo+json",
   });
 
