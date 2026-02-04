@@ -125,8 +125,7 @@ async function nwsPointsRequest(): Promise<void> {
   viewElement.map?.layers.removeAll();
 
   const observationStationsLayer = new GeoJSONLayer({
-    title: "NWS Observation Stations",
-    url,
+    copyright: "NWS",
     popupEnabled: true,
     popupTemplate: {
       title: "{name} ({stationIdentifier})",
@@ -223,6 +222,8 @@ async function nwsPointsRequest(): Promise<void> {
           "https://www.arcgis.com/sharing/rest/content/items/37da62fcdb854f8e8305c79e8b5023dc/data",
       }),
     }),
+    title: "NWS Observation Stations",
+    url,
   });
 
   viewElement.map?.layers.add(observationStationsLayer);
