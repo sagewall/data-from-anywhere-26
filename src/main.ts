@@ -1,7 +1,9 @@
 import WebMap from "@arcgis/core/WebMap";
 import GeoJSONLayer from "@arcgis/core/layers/GeoJSONLayer";
 import { CustomContent } from "@arcgis/core/popup/content";
+import SimpleRenderer from "@arcgis/core/renderers/SimpleRenderer";
 import request from "@arcgis/core/request";
+import WebStyleSymbol from "@arcgis/core/symbols/WebStyleSymbol";
 import "@arcgis/map-components/components/arcgis-map";
 import "@esri/calcite-components/components/calcite-shell";
 import "./style.css";
@@ -122,6 +124,13 @@ async function nwsPointsRequest(): Promise<void> {
         }),
       ],
     },
+    renderer: new SimpleRenderer({
+      symbol: new WebStyleSymbol({
+        name: "Radio Tower_Large_3",
+        styleUrl:
+          "https://www.arcgis.com/sharing/rest/content/items/37da62fcdb854f8e8305c79e8b5023dc/data",
+      }),
+    }),
   });
 
   viewElement.map?.layers.add(observationStationsLayer);
