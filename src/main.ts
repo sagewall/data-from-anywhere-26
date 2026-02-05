@@ -1,15 +1,33 @@
+import Color from "@arcgis/core/Color.js";
 import WebMap from "@arcgis/core/WebMap.js";
 import GeoJSONLayer from "@arcgis/core/layers/GeoJSONLayer.js";
 import CustomContent from "@arcgis/core/popup/content/CustomContent.js";
 import SimpleRenderer from "@arcgis/core/renderers/SimpleRenderer.js";
 import request from "@arcgis/core/request.js";
+import SimpleFillSymbol from "@arcgis/core/symbols/SimpleFillSymbol.js";
 import WebStyleSymbol from "@arcgis/core/symbols/WebStyleSymbol.js";
+import "@arcgis/map-components/components/arcgis-feature";
 import "@arcgis/map-components/components/arcgis-map";
 import "@arcgis/map-components/components/arcgis-search";
 import "@esri/calcite-components/components/calcite-shell";
 import "./style.css";
 
-const userAgent = "data-from-anywhere-26";
+// Application state to keep track of layers
+const state = {
+  forecastLayer: null as GeoJSONLayer | null,
+  observationStationsLayer: null as GeoJSONLayer | null,
+};
+
+// Headers for API requests, including a User-Agent as required by the NWS API
+const headers = {
+  accept: "application/geo+json",
+  "User-Agent": "data-from-anywhere-26",
+};
+
+// Get a reference to the arcgis-feature element
+const featureElement = document.querySelector(
+  "arcgis-feature",
+)! as HTMLArcgisFeatureElement;
 
 // Get a reference to the arcgis-map element
 const viewElement = document.querySelector(
@@ -34,23 +52,133 @@ viewElement.constraints.maxZoom = 15;
 // Event listener for when the view extent changes
 viewElement.addEventListener("arcgisViewChange", () => {
   if (viewElement.stationary) {
-    nwsPointsRequest();
+    createObservationStationsLayer();
   }
 });
 
-// Function to handle NWS Points request and subsequent data processing
-async function nwsPointsRequest(): Promise<void> {
-  if (!viewElement.center) {
+// Event listener for when the view is clicked
+viewElement.addEventListener("arcgisViewClick", async (event) => {
+  // Get the map point from the click event
+  const { mapPoint } = event.detail;
+
+  // Get the latitude and longitude from the map point
+  const { latitude, longitude } = mapPoint;
+
+  // If there's an existing forecast layer, remove it before adding a new one
+  if (state.forecastLayer) {
+    viewElement.map?.layers.remove(state.forecastLayer);
+  }
+
+  // Clear the graphic from the Feature element to reset the popup content
+  featureElement.graphic = null;
+
+  // Perform a hit test to check if the click was on an existing station feature
+  const hitTestResult = await viewElement.hitTest(event.detail, {
+    include: viewElement.map?.layers.filter(
+      (layer) => layer.title === "NWS Observation Stations",
+    ),
+  });
+
+  // If the click was on an existing station feature, do not add a new forecast layer or update the popup content,
+  // as the existing station's popup will handle that. Also, if latitude or longitude are not defined,
+  // do not proceed with the forecast request.
+  if (hitTestResult.results.length > 0 || !latitude || !longitude) {
+    return;
+  }
+
+  // Request forecast data for the clicked location
+  const forecast = await requestForecast(latitude, longitude);
+
+  // Deep clone the forecast data to avoid mutating the original response
+  const structuredForecastData = structuredClone(forecast.data);
+
+  // Process the properties of the forecast data to flatten nested objects and arrays
+  structuredForecastData.properties = processProperties(
+    forecast.data.properties,
+  );
+
+  // Create a Blob from the processed data
+  const blob = new Blob([JSON.stringify(structuredForecastData)], {
+    type: "application/geo+json",
+  });
+
+  // Create a URL for the Blob
+  const url = URL.createObjectURL(blob);
+
+  // Create a new GeoJSONLayer for the forecast data and add it to the map
+  state.forecastLayer = new GeoJSONLayer({
+    title: "Forecast Area",
+    popupTemplate: {
+      title: `Forecast for ${latitude.toFixed(3)}, ${longitude.toFixed(3)}`,
+      content: [
+        new CustomContent({
+          outFields: [
+            "icon",
+            "temperature_value",
+            "textDescription",
+            "periods_0_name",
+            "periods_0_detailedForecast",
+            "periods_0_icon",
+            "periods_1_name",
+            "periods_1_detailedForecast",
+            "periods_1_icon",
+            "periods_2_name",
+            "periods_2_detailedForecast",
+            "periods_2_icon",
+            "periods_3_name",
+            "periods_3_detailedForecast",
+            "periods_3_icon",
+            "periods_4_name",
+            "periods_4_detailedForecast",
+            "periods_4_icon",
+            "periods_5_name",
+            "periods_5_detailedForecast",
+            "periods_5_icon",
+          ],
+          creator: popupContentCreator,
+        }),
+      ],
+    },
+    renderer: new SimpleRenderer({
+      symbol: new SimpleFillSymbol({
+        color: new Color([255, 0, 0, 0.25]),
+        outline: {
+          color: new Color([255, 0, 0]),
+          width: 1,
+        },
+      }),
+    }),
+    url,
+  });
+
+  // Add the forecast layer to the map
+  viewElement.map?.layers.add(state.forecastLayer);
+
+  // Get the first graphic from the forecast layer and set it on the Feature element to display the popup content
+  const graphics = await state.forecastLayer.queryFeatures();
+  const graphic = graphics.features[0];
+  featureElement.graphic = graphic;
+});
+
+// Function to create the observation stations layer based on the current view center
+async function createObservationStationsLayer(): Promise<void> {
+  // Ensure the view center is defined before making requests
+  if (
+    !viewElement.center ||
+    !viewElement.center.latitude ||
+    !viewElement.center.longitude
+  ) {
     console.error("View center is not defined.");
     return;
   }
-  const { latitude, longitude } = viewElement.center;
-  if (!latitude || !longitude) {
-    console.error("View center latitude or longitude is not defined.");
-    return;
-  }
-  const nwsPoints = await requestPoints(latitude, longitude);
 
+  // Request NWS points data for the current view center
+  const nwsPoints = await requestPoints(
+    viewElement.center.latitude,
+    viewElement.center.longitude,
+  );
+
+  // Request observation stations using the URL from the NWS points data
   const observationStations = await requestObservationStations(
     nwsPoints.data.properties.observationStations,
   );
@@ -71,8 +199,8 @@ async function nwsPointsRequest(): Promise<void> {
         ]);
         feature.properties = processProperties({
           ...feature.properties,
-          ...observationProperties.data.properties,
-          ...forecastProperties.data.properties,
+          ...observationProperties.data?.properties,
+          ...forecastProperties.data?.properties,
         });
       } catch (error) {
         console.error(
@@ -83,7 +211,7 @@ async function nwsPointsRequest(): Promise<void> {
     },
   );
 
-  // // Wait for all feature data to be requested and processed
+  // Wait for all feature data to be requested and processed
   await Promise.all(allFeaturePromises);
 
   // Create a Blob from the processed data
@@ -93,9 +221,6 @@ async function nwsPointsRequest(): Promise<void> {
 
   // Create a URL for the Blob
   const url = URL.createObjectURL(blob);
-
-  // Remove existing layers before adding the new one
-  viewElement.map?.layers.removeAll();
 
   // Create a new GeoJSONLayer with the processed data
   const observationStationsLayer = new GeoJSONLayer({
@@ -128,64 +253,7 @@ async function nwsPointsRequest(): Promise<void> {
             "periods_5_detailedForecast",
             "periods_5_icon",
           ],
-          creator: async (event) => {
-            const attributes = event.graphic.attributes;
-
-            const list = document.createElement("calcite-list");
-
-            const currentConditionsListItem =
-              document.createElement("calcite-list-item");
-            currentConditionsListItem.label = "Current Conditions";
-            const temperature = attributes.temperature_value
-              ? (attributes.temperature_value * 9) / 5 + 32
-              : "";
-            const textDescription = attributes.textDescription
-              ? attributes.textDescription
-              : "";
-            const description = `${textDescription ? textDescription + " " : "Unknown "}${temperature ? temperature.toFixed(1) + " °F" : ""}`;
-            currentConditionsListItem.description = description;
-
-            if (attributes.icon) {
-              const img = document.createElement("img");
-              img.src = attributes.icon;
-              img.alt = attributes.textDescription
-                ? attributes.textDescription
-                : "Current Conditions Icon";
-              img.style.maxWidth = "50px";
-              img.slot = "content-start";
-              currentConditionsListItem.appendChild(img);
-            }
-
-            list.appendChild(currentConditionsListItem);
-
-            for (let i = 0; i < 6; i++) {
-              const forecastListItem =
-                document.createElement("calcite-list-item");
-              forecastListItem.label = attributes[`periods_${i}_name`]
-                ? attributes[`periods_${i}_name`]
-                : `Period ${i + 1}`;
-              forecastListItem.description = attributes[
-                `periods_${i}_detailedForecast`
-              ]
-                ? attributes[`periods_${i}_detailedForecast`]
-                : "No forecast available";
-
-              if (attributes[`periods_${i}_icon`]) {
-                const img = document.createElement("img");
-                img.src = attributes[`periods_${i}_icon`];
-                img.alt = attributes[`periods_${i}_detailedForecast`]
-                  ? attributes[`periods_${i}_detailedForecast`]
-                  : `Icon for Period ${i + 1}`;
-                img.style.maxWidth = "50px";
-                img.slot = "content-start";
-                forecastListItem.appendChild(img);
-              }
-
-              list.appendChild(forecastListItem);
-            }
-
-            return list;
-          },
+          creator: popupContentCreator,
         }),
       ],
     },
@@ -200,8 +268,75 @@ async function nwsPointsRequest(): Promise<void> {
     url,
   });
 
-  // Add the new layer to the map
-  viewElement.map?.layers.add(observationStationsLayer);
+  // If there's an existing observation stations layer, remove it before adding the new one
+  if (state.observationStationsLayer) {
+    viewElement.map?.layers.remove(state.observationStationsLayer);
+  }
+
+  // Update the state with the new layer reference
+  state.observationStationsLayer = observationStationsLayer;
+
+  // Add the new layer to the map if it is not null
+  viewElement.map?.layers.add(state.observationStationsLayer);
+}
+
+// Function to create custom popup content for forecast and observation station features
+function popupContentCreator(event: any): HTMLCalciteListElement {
+  const attributes = event.graphic.attributes;
+
+  const list = document.createElement("calcite-list");
+
+  if (attributes.temperature_value || attributes.textDescription) {
+    const currentConditionsListItem =
+      document.createElement("calcite-list-item");
+    currentConditionsListItem.label = "Current Conditions";
+    const temperature = attributes.temperature_value
+      ? (attributes.temperature_value * 9) / 5 + 32
+      : "";
+    const textDescription = attributes.textDescription
+      ? attributes.textDescription
+      : "";
+    const description = `${textDescription ? textDescription + " " : "Unknown "}${temperature ? temperature.toFixed(1) + " °F" : ""}`;
+    currentConditionsListItem.description = description;
+
+    if (attributes.icon) {
+      const img = document.createElement("img");
+      img.src = attributes.icon;
+      img.alt = attributes.textDescription
+        ? attributes.textDescription
+        : "Current Conditions Icon";
+      img.style.maxWidth = "50px";
+      img.slot = "content-start";
+      currentConditionsListItem.appendChild(img);
+    }
+
+    list.appendChild(currentConditionsListItem);
+  }
+
+  for (let i = 0; i < 6; i++) {
+    const forecastListItem = document.createElement("calcite-list-item");
+    forecastListItem.label = attributes[`periods_${i}_name`]
+      ? attributes[`periods_${i}_name`]
+      : `Period ${i + 1}`;
+    forecastListItem.description = attributes[`periods_${i}_detailedForecast`]
+      ? attributes[`periods_${i}_detailedForecast`]
+      : "No forecast available";
+
+    if (attributes[`periods_${i}_icon`]) {
+      const img = document.createElement("img");
+      img.src = attributes[`periods_${i}_icon`];
+      img.alt = attributes[`periods_${i}_detailedForecast`]
+        ? attributes[`periods_${i}_detailedForecast`]
+        : `Icon for Period ${i + 1}`;
+      img.style.maxWidth = "50px";
+      img.slot = "content-start";
+      forecastListItem.appendChild(img);
+    }
+
+    list.appendChild(forecastListItem);
+  }
+
+  return list;
 }
 
 // Recursive function to process properties as some are nested objects or arrays
@@ -235,17 +370,11 @@ async function requestForecast(
     const points = await request(
       `https://api.weather.gov/points/${latitude},${longitude}`,
       {
-        headers: {
-          accept: "application/geo+json",
-          "User-Agent": userAgent,
-        },
+        headers,
       },
     );
     return await request(points.data.properties.forecast, {
-      headers: {
-        accept: "application/geo+json",
-        "User-Agent": userAgent,
-      },
+      headers,
     });
     // return processProperties(forecast.data.properties);
   } catch (error) {
@@ -265,10 +394,7 @@ async function requestLatestObservations(
     return await request(
       `https://api.weather.gov/stations/${stationIdentifier}/observations/latest`,
       {
-        headers: {
-          accept: "application/geo+json",
-          "User-Agent": userAgent,
-        },
+        headers,
       },
     );
     // return processProperties(observations.data.properties);
@@ -287,10 +413,7 @@ async function requestObservationStations(
 ): Promise<any> {
   try {
     return await request(observationStationsUrl, {
-      headers: {
-        accept: "application/geo+json",
-        "User-Agent": userAgent,
-      },
+      headers,
     });
   } catch (error) {
     console.error(
@@ -310,10 +433,7 @@ async function requestPoints(
     return await request(
       `https://api.weather.gov/points/${latitude},${longitude}`,
       {
-        headers: {
-          accept: "application/geo+json",
-          "User-Agent": userAgent,
-        },
+        headers,
       },
     );
   } catch (error) {
