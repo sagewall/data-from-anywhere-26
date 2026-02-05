@@ -9,6 +9,8 @@ import "@arcgis/map-components/components/arcgis-search";
 import "@esri/calcite-components/components/calcite-shell";
 import "./style.css";
 
+const userAgent = "data-from-anywhere-26";
+
 // Get a reference to the arcgis-map element
 const viewElement = document.querySelector(
   "arcgis-map",
@@ -38,102 +40,54 @@ viewElement.addEventListener("arcgisViewChange", () => {
 
 // Function to handle NWS Points request and subsequent data processing
 async function nwsPointsRequest(): Promise<void> {
-  // Request NWS Points data based on the current center of the view
-  const nwsPointsRequest = await request(
-    `https://api.weather.gov/points/${viewElement.center.latitude},${viewElement.center.longitude}`,
-    {
-      headers: {
-        accept: "application/geo+json",
-        "User-Agent": "data-from-anywhere-26",
-      },
-    },
-  );
-  // Request observation stations from the NWS Points data
-  const observationStationsRequest = await request(
-    nwsPointsRequest.data.properties.observationStations,
-    {
-      headers: {
-        accept: "application/geo+json",
-        "User-Agent": "data-from-anywhere-26",
-      },
-    },
+  if (!viewElement.center) {
+    console.error("View center is not defined.");
+    return;
+  }
+  const { latitude, longitude } = viewElement.center;
+  if (!latitude || !longitude) {
+    console.error("View center latitude or longitude is not defined.");
+    return;
+  }
+  const nwsPoints = await requestPoints(latitude, longitude);
+
+  const observationStations = await requestObservationStations(
+    nwsPoints.data.properties.observationStations,
   );
 
   // Deep clone the data to avoid mutating the original response
-  const data = structuredClone(observationStationsRequest.data);
+  const structuredStationData = structuredClone(observationStations.data);
 
   // Process each feature to get latest observations and forecast data
-  const allFeaturePromises = data.features.map(async (feature: any) => {
-    const processedProperties = processProperties(feature.properties);
-    feature.properties = processedProperties;
-
-    // Request latest observations for the station
-    const requestLatestObservations = async () => {
+  const allFeaturePromises = structuredStationData.features.map(
+    async (feature: any) => {
       try {
-        const observations = await request(
-          `https://api.weather.gov/stations/${processedProperties.stationIdentifier}/observations/latest`,
-          {
-            headers: {
-              accept: "application/geo+json",
-              "User-Agent": "data-from-anywhere-26",
-            },
-          },
-        );
-        const processedObservationProperties = processProperties(
-          observations.data.properties,
-        );
-        feature.properties = {
+        const [observationProperties, forecastProperties] = await Promise.all([
+          requestLatestObservations(feature.properties.stationIdentifier),
+          requestForecast(
+            feature.geometry.coordinates[1],
+            feature.geometry.coordinates[0],
+          ),
+        ]);
+        feature.properties = processProperties({
           ...feature.properties,
-          ...processedObservationProperties,
-        };
-      } catch (err) {
-        console.error(
-          "Failed to process observation for feature",
-          feature,
-          err,
-        );
-      }
-    };
-
-    // Request forecast data for the station
-    const requestForecast = async () => {
-      try {
-        const points = await request(
-          `https://api.weather.gov/points/${feature.geometry.coordinates[1]},${feature.geometry.coordinates[0]}`,
-          {
-            headers: {
-              accept: "application/geo+json",
-              "User-Agent": "data-from-anywhere-26",
-            },
-          },
-        );
-        const forecast = await request(points.data.properties.forecast, {
-          headers: {
-            accept: "application/geo+json",
-            "User-Agent": "data-from-anywhere-26",
-          },
+          ...observationProperties.data.properties,
+          ...forecastProperties.data.properties,
         });
-        const processedForecastProperties = processProperties(
-          forecast.data.properties,
+      } catch (error) {
+        console.error(
+          `Failed to process data for feature with stationIdentifier ${feature.properties.stationIdentifier}`,
+          error,
         );
-        feature.properties = {
-          ...feature.properties,
-          ...processedForecastProperties,
-        };
-      } catch (err) {
-        console.error("Failed to process forecast for feature", feature, err);
       }
-    };
+    },
+  );
 
-    // Execute both requests in parallel
-    await Promise.all([requestLatestObservations(), requestForecast()]);
-  });
-
-  // Wait for all feature data to be requested and processed
+  // // Wait for all feature data to be requested and processed
   await Promise.all(allFeaturePromises);
 
   // Create a Blob from the processed data
-  const blob = new Blob([JSON.stringify(data)], {
+  const blob = new Blob([JSON.stringify(structuredStationData)], {
     type: "application/geo+json",
   });
 
@@ -270,4 +224,103 @@ function processProperties(object: any, prefix = ""): any {
     }
   }
   return result;
+}
+
+// Function to request forecast data from latitude and longitude
+async function requestForecast(
+  latitude: number,
+  longitude: number,
+): Promise<any> {
+  try {
+    const points = await request(
+      `https://api.weather.gov/points/${latitude},${longitude}`,
+      {
+        headers: {
+          accept: "application/geo+json",
+          "User-Agent": userAgent,
+        },
+      },
+    );
+    return await request(points.data.properties.forecast, {
+      headers: {
+        accept: "application/geo+json",
+        "User-Agent": userAgent,
+      },
+    });
+    // return processProperties(forecast.data.properties);
+  } catch (error) {
+    console.error(
+      `Failed to process forecast for ${latitude},${longitude}`,
+      error,
+    );
+    return {};
+  }
+}
+
+// Function to request latest observations for a station
+async function requestLatestObservations(
+  stationIdentifier: string,
+): Promise<any> {
+  try {
+    return await request(
+      `https://api.weather.gov/stations/${stationIdentifier}/observations/latest`,
+      {
+        headers: {
+          accept: "application/geo+json",
+          "User-Agent": userAgent,
+        },
+      },
+    );
+    // return processProperties(observations.data.properties);
+  } catch (error) {
+    console.error(
+      `Failed to process observation for ${stationIdentifier}`,
+      error,
+    );
+    return {};
+  }
+}
+
+// Function to request observation stations from NWS Points data
+async function requestObservationStations(
+  observationStationsUrl: string,
+): Promise<any> {
+  try {
+    return await request(observationStationsUrl, {
+      headers: {
+        accept: "application/geo+json",
+        "User-Agent": userAgent,
+      },
+    });
+  } catch (error) {
+    console.error(
+      `Failed to request observation stations from ${observationStationsUrl}`,
+      error,
+    );
+    return {};
+  }
+}
+
+// Function to request NWS Points data based on latitude and longitude
+async function requestPoints(
+  latitude: number,
+  longitude: number,
+): Promise<any> {
+  try {
+    return await request(
+      `https://api.weather.gov/points/${latitude},${longitude}`,
+      {
+        headers: {
+          accept: "application/geo+json",
+          "User-Agent": userAgent,
+        },
+      },
+    );
+  } catch (error) {
+    console.error(
+      `Failed to request NWS Points data for ${latitude},${longitude}`,
+      error,
+    );
+    return {};
+  }
 }
