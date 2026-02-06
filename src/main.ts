@@ -107,7 +107,8 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
 
   // Create a new GeoJSONLayer for the forecast data and add it to the map
   state.forecastLayer = new GeoJSONLayer({
-    title: "Forecast Area",
+    copyright: "NWS",
+    popupEnabled: false,
     popupTemplate: {
       title: `Forecast for ${latitude.toFixed(3)}, ${longitude.toFixed(3)}`,
       content: [
@@ -148,6 +149,7 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
         },
       }),
     }),
+    title: "Forecast Area",
     url,
   });
 
