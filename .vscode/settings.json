@@ -1,0 +1,10 @@
+{
+  "html.customData": [
+    "./node_modules/@arcgis/map-components/dist/docs/vscode.html-custom-data.json",
+    "./node_modules/@esri/calcite-components/dist/docs/vscode.html-custom-data.json"
+  ],
+  "css.customData": [
+    "./node_modules/@arcgis/map-components/dist/docs/vscode.css-custom-data.json",
+    "./node_modules/@esri/calcite-components/dist/docs/vscode.css-custom-data.json"
+  ]
+}
