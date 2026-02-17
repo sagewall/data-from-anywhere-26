@@ -9,7 +9,14 @@ import WebStyleSymbol from "@arcgis/core/symbols/WebStyleSymbol.js";
 import "@arcgis/map-components/components/arcgis-feature";
 import "@arcgis/map-components/components/arcgis-map";
 import "@arcgis/map-components/components/arcgis-search";
+import "@esri/calcite-components/components/calcite-action";
+import "@esri/calcite-components/components/calcite-dialog";
+import "@esri/calcite-components/components/calcite-link";
+import "@esri/calcite-components/components/calcite-navigation";
+import "@esri/calcite-components/components/calcite-navigation-logo";
+import "@esri/calcite-components/components/calcite-notice";
 import "@esri/calcite-components/components/calcite-shell";
+import "@esri/calcite-components/components/calcite-tooltip";
 import "./style.css";
 
 // Application state to keep track of layers
@@ -446,3 +453,10 @@ async function requestPoints(
     return {};
   }
 }
+
+document.getElementById("toggle-dialog")?.addEventListener("click", () => {
+  const dialog = document.getElementById("dialog") as HTMLCalciteDialogElement;
+  if (dialog) {
+    dialog.open = !dialog.open;
+  }
+});

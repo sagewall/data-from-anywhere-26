@@ -7,12 +7,82 @@
     <title>data-from-anywhere-26</title>
   </head>
   <body>
-    <calcite-shell>
+    <calcite-shell class="calcite-mode-auto">
+      <calcite-navigation slot="header">
+        <calcite-navigation-logo
+          alt="Application logo"
+          description="Esri Developer & Technology Summit"
+          heading="NWS Weather API GeoJSONLayer Demo"
+          icon="clustering"
+          slot="logo"
+        ></calcite-navigation-logo>
+        <calcite-action
+          icon="information"
+          id="toggle-dialog"
+          slot="content-end"
+          text="About this application"
+        ></calcite-action>
+        <calcite-tooltip
+          close-on-click
+          placement="bottom"
+          reference-element="toggle-dialog"
+          slot="content-end"
+          >About this application</calcite-tooltip
+        >
+      </calcite-navigation>
       <arcgis-map center="-104.9903,39.7392" zoom="10">
         <arcgis-search slot="top-right"></arcgis-search>
         <arcgis-feature slot="top-left"></arcgis-feature>
       </arcgis-map>
     </calcite-shell>
+    <calcite-dialog id="dialog" heading="About this application" modal>
+      <div>
+        <calcite-notice open>
+          <span slot="title"
+            >This demonstration application is a companion resource to the
+            "ArcGIS Maps SDK for JavaScript: Bring in Data from Anywhere"
+            session at Esri Developer & Technology Summit.
+          </span>
+        </calcite-notice>
+        This example illustrates.
+        <ul>
+          <li>Using the request module.</li>
+          <li>Creating GeoJSON layers.</li>
+        </ul>
+        Learn more about
+        <calcite-link
+          href="https://developers.arcgis.com/javascript/latest/references/core/request/"
+          target="_blank"
+          >HTTP requests</calcite-link
+        >
+        and
+        <calcite-link
+          href="https://developers.arcgis.com/javascript/latest/references/core/layers/GeoJSONLayer/"
+          target="_blank"
+          >GeoJSONLayers</calcite-link
+        >
+        in the ArcGIS Maps SDK for JavaScript in the
+        <calcite-link
+          href="https://developers.arcgis.com/javascript/latest/"
+          target="_blank"
+        >
+          documentation</calcite-link
+        >.
+        <hr />
+        <calcite-link
+          href="https://github.com/sagewall/data-from-anywhere-26"
+          target="_blank"
+          >Application source code</calcite-link
+        >
+        <hr />
+        Weather data is from the
+        <calcite-link
+          href="https://www.weather.gov/documentation/services-web-api"
+          target="_blank"
+          >NWS Weather API</calcite-link
+        >
+      </div>
+    </calcite-dialog>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
