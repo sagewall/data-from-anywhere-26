@@ -10,12 +10,12 @@
   },
   "devDependencies": {
     "typescript": "~5.9.3",
-    "vite": "npm:rolldown-vite@7.2.5"
+    "vite": "npm:rolldown-vite@7.3.1"
   },
   "overrides": {
-    "vite": "npm:rolldown-vite@7.2.5"
+    "vite": "npm:rolldown-vite@7.3.1"
   },
   "dependencies": {
-    "@arcgis/map-components": "^5.0.0-next.156"
+    "@arcgis/map-components": "~5.0.0"
   }
 }

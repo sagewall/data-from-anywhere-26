@@ -97,11 +97,11 @@ toggleDialogButton.addEventListener("click", () => {
 
 // Event listener for when the view extent changes
 viewElement.addEventListener("arcgisViewChange", () => {
+  // Remove the existing forecast layer if it exists, as it may no longer be relevant to the new view extent
+  removeExistingForecastLayer();
+
   // If the view is stationary after the change
   if (viewElement.stationary) {
-    // Remove the existing forecast layer if it exists, as it may no longer be relevant to the new view extent
-    removeExistingForecastLayer();
-
     // Create or update the observation stations layer based on the new view center
     createObservationStationsLayer();
   }
@@ -519,6 +519,7 @@ function createObservationStationsSymbol(url: string): CIMSymbol {
                         method: "OnPolygon",
                         offsetX: 0,
                         offsetY: 0,
+                        // @ts-expect-error this is supported but missing from the type definition
                         clipAtBoundary: true,
                         placePerPart: true,
                       },
