@@ -435,7 +435,7 @@ function popupContentCreator(event: any): HTMLCalciteListElement {
       img.alt = attributes.textDescription
         ? attributes.textDescription
         : "Current Conditions Icon";
-      img.style.maxWidth = "50px";
+      img.style.maxWidth = "86px";
       img.slot = "content-start";
       currentConditionsListItem.appendChild(img);
     }
@@ -458,7 +458,7 @@ function popupContentCreator(event: any): HTMLCalciteListElement {
       img.alt = attributes[`periods_${i}_detailedForecast`]
         ? attributes[`periods_${i}_detailedForecast`]
         : `Icon for Period ${i + 1}`;
-      img.style.maxWidth = "50px";
+      img.style.maxWidth = "86px";
       img.slot = "content-start";
       forecastListItem.appendChild(img);
     }
