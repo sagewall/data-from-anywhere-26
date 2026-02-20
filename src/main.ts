@@ -21,11 +21,30 @@ import "@esri/calcite-components/components/calcite-tooltip";
 import "./style.css";
 import WebStyleSymbol from "@arcgis/core/symbols/WebStyleSymbol";
 
+const FORECAST_CACHE_TTL_MS = 5 * 60 * 1000;
+const OBSERVATIONS_CACHE_TTL_MS = 2 * 60 * 1000;
+const POINTS_STATIONS_CACHE_TTL_MS = 10 * 60 * 1000;
+const ICON_CACHE_TTL_MS = 30 * 60 * 1000;
+
+type CacheEntry<T> = {
+  value: T;
+  expiresAt: number;
+};
+
 // Application state to keep track of layers
 const state = {
   forecastLayer: null as GeoJSONLayer | null,
-  iconStatusCache: new Map<string, boolean>(),
+  forecastLayerUrl: "",
+  forecastCache: new Map<string, CacheEntry<any>>(),
+  iconStatusCache: new Map<string, CacheEntry<boolean>>(),
+  inFlightIconChecks: new Map<string, Promise<boolean>>(),
+  inFlightRequests: new Map<string, Promise<any | null>>(),
+  lastObservationStationsKey: "",
+  latestObservationsCache: new Map<string, CacheEntry<any>>(),
   observationStationsLayer: null as GeoJSONLayer | null,
+  observationStationsLayerUrl: "",
+  observationStationsCache: new Map<string, CacheEntry<any>>(),
+  pointsCache: new Map<string, CacheEntry<any>>(),
 };
 
 // Headers for API requests, including a User-Agent as required by the NWS API
@@ -99,6 +118,10 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
   // Request forecast data for the clicked location
   const forecast = await requestForecast(latitude, longitude);
 
+  if (!forecast?.data?.properties) {
+    return;
+  }
+
   // Deep clone the forecast data to avoid mutating the original response
   const structuredForecastData = structuredClone(forecast.data);
 
@@ -114,6 +137,11 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
 
   // Create a URL for the Blob
   const url = URL.createObjectURL(blob);
+
+  if (state.forecastLayerUrl) {
+    URL.revokeObjectURL(state.forecastLayerUrl);
+  }
+  state.forecastLayerUrl = url;
 
   // Create a new GeoJSONLayer for the forecast data and add it to the map
   state.forecastLayer = new GeoJSONLayer({
@@ -175,25 +203,47 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
 // Function to create the observation stations layer based on the current view center
 async function createObservationStationsLayer(): Promise<void> {
   // Ensure the view center is defined before making requests
-  if (
-    !viewElement.center ||
-    !viewElement.center.latitude ||
-    !viewElement.center.longitude
-  ) {
+  if (!viewElement.center) {
     console.error("View center is not defined.");
     return;
   }
 
+  const centerLatitude = viewElement.center.latitude;
+  const centerLongitude = viewElement.center.longitude;
+
+  if (centerLatitude == null || centerLongitude == null) {
+    console.error("View center coordinates are invalid.");
+    return;
+  }
+
+  if (!Number.isFinite(centerLatitude) || !Number.isFinite(centerLongitude)) {
+    console.error("View center coordinates are invalid.");
+    return;
+  }
+
+  const observationStationsKey = `${normalizeCoordinate(centerLatitude)},${normalizeCoordinate(centerLongitude)}`;
+  if (observationStationsKey === state.lastObservationStationsKey) {
+    return;
+  }
+  state.lastObservationStationsKey = observationStationsKey;
+
   // Request NWS points data for the current view center
-  const nwsPoints = await requestPoints(
-    viewElement.center.latitude,
-    viewElement.center.longitude,
-  );
+  const nwsPoints = await requestPoints(centerLatitude, centerLongitude);
+  const observationStationsUrl =
+    nwsPoints?.data?.properties?.observationStations;
+
+  if (!observationStationsUrl) {
+    return;
+  }
 
   // Request observation stations using the URL from the NWS points data
   const observationStations = await requestObservationStations(
-    nwsPoints.data.properties.observationStations,
+    observationStationsUrl,
   );
+
+  if (!observationStations?.data?.features) {
+    return;
+  }
 
   // Deep clone the data to avoid mutating the original response
   const structuredStationData = structuredClone(observationStations.data);
@@ -202,17 +252,23 @@ async function createObservationStationsLayer(): Promise<void> {
   const allFeaturePromises = structuredStationData.features.map(
     async (feature: any) => {
       try {
+        const stationIdentifier = feature?.properties?.stationIdentifier;
+        const [longitude, latitude] = feature?.geometry?.coordinates ?? [];
+        const stationForecastUrl = feature?.properties?.forecast;
+
         const [observationProperties, forecastProperties] = await Promise.all([
-          requestLatestObservations(feature.properties.stationIdentifier),
-          requestForecast(
-            feature.geometry.coordinates[1],
-            feature.geometry.coordinates[0],
-          ),
+          requestLatestObservations(stationIdentifier),
+          stationForecastUrl
+            ? requestForecastByUrl(stationForecastUrl)
+            : Number.isFinite(latitude) && Number.isFinite(longitude)
+              ? requestForecast(latitude, longitude)
+              : Promise.resolve(null),
         ]);
+
         feature.properties = processProperties({
           ...feature.properties,
-          ...observationProperties.data?.properties,
-          ...forecastProperties.data?.properties,
+          ...(observationProperties?.data?.properties ?? {}),
+          ...(forecastProperties?.data?.properties ?? {}),
         });
       } catch (error) {
         console.error(
@@ -233,6 +289,11 @@ async function createObservationStationsLayer(): Promise<void> {
 
   // Create a URL for the Blob
   const url = URL.createObjectURL(blob);
+
+  if (state.observationStationsLayerUrl) {
+    URL.revokeObjectURL(state.observationStationsLayerUrl);
+  }
+  state.observationStationsLayerUrl = url;
 
   // Create a new GeoJSONLayer with the processed data
   const observationStationsLayer = new GeoJSONLayer({
@@ -436,20 +497,36 @@ async function isHttp200(url: string): Promise<boolean> {
     return false;
   }
 
-  const cached = state.iconStatusCache.get(url);
-  if (cached !== undefined) {
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    return false;
+  }
+
+  const cached = getCachedValue(state.iconStatusCache, url);
+  if (cached !== null) {
     return cached;
   }
 
-  try {
-    const response = await fetch(url, { method: "HEAD" });
-    const isOk = response.status === 200;
-    state.iconStatusCache.set(url, isOk);
-    return isOk;
-  } catch {
-    state.iconStatusCache.set(url, false);
-    return false;
+  const inFlight = state.inFlightIconChecks.get(url);
+  if (inFlight) {
+    return inFlight;
   }
+
+  const checkPromise = (async () => {
+    try {
+      const response = await fetch(url, { method: "HEAD" });
+      const isOk = response.status === 200;
+      setCachedValue(state.iconStatusCache, url, isOk, ICON_CACHE_TTL_MS);
+      return isOk;
+    } catch {
+      setCachedValue(state.iconStatusCache, url, false, ICON_CACHE_TTL_MS);
+      return false;
+    } finally {
+      state.inFlightIconChecks.delete(url);
+    }
+  })();
+
+  state.inFlightIconChecks.set(url, checkPromise);
+  return checkPromise;
 }
 
 // Function to create custom popup content for forecast and observation station features
@@ -537,84 +614,199 @@ function processProperties(object: any, prefix = ""): any {
 async function requestForecast(
   latitude: number,
   longitude: number,
-): Promise<any> {
-  try {
-    const points = await request(
-      `https://api.weather.gov/points/${latitude},${longitude}`,
-      {
-        headers,
-      },
-    );
-    return await request(points.data.properties.forecast, {
-      headers,
-    });
-    // return processProperties(forecast.data.properties);
-  } catch (error) {
-    console.error(
-      `Failed to process forecast for ${latitude},${longitude}`,
-      error,
-    );
-    return {};
+): Promise<any | null> {
+  const points = await requestPoints(latitude, longitude);
+  const forecastUrl = points?.data?.properties?.forecast;
+
+  if (!forecastUrl) {
+    return null;
   }
+
+  return requestForecastByUrl(forecastUrl);
+}
+
+async function requestForecastByUrl(forecastUrl: string): Promise<any | null> {
+  if (!forecastUrl) {
+    return null;
+  }
+
+  const cacheKey = `forecast:${forecastUrl}`;
+  const cached = getCachedValue(state.forecastCache, cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const response = await requestWithDedupe(cacheKey, forecastUrl);
+  if (response) {
+    setCachedValue(
+      state.forecastCache,
+      cacheKey,
+      response,
+      FORECAST_CACHE_TTL_MS,
+    );
+  }
+  return response;
 }
 
 // Function to request latest observations for a station
 async function requestLatestObservations(
   stationIdentifier: string,
-): Promise<any> {
-  try {
-    return await request(
-      `https://api.weather.gov/stations/${stationIdentifier}/observations/latest`,
-      {
-        headers,
-      },
-    );
-    // return processProperties(observations.data.properties);
-  } catch (error) {
-    console.error(
-      `Failed to process observation for ${stationIdentifier}`,
-      error,
-    );
-    return {};
+): Promise<any | null> {
+  if (!stationIdentifier) {
+    return null;
   }
+
+  const url = `https://api.weather.gov/stations/${stationIdentifier}/observations/latest`;
+  const cacheKey = `observations:${stationIdentifier}`;
+  const cached = getCachedValue(state.latestObservationsCache, cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const response = await requestWithDedupe(cacheKey, url);
+  if (response) {
+    setCachedValue(
+      state.latestObservationsCache,
+      cacheKey,
+      response,
+      OBSERVATIONS_CACHE_TTL_MS,
+    );
+  }
+  return response;
 }
 
 // Function to request observation stations from NWS Points data
 async function requestObservationStations(
   observationStationsUrl: string,
-): Promise<any> {
-  try {
-    return await request(observationStationsUrl, {
-      headers,
-    });
-  } catch (error) {
-    console.error(
-      `Failed to request observation stations from ${observationStationsUrl}`,
-      error,
-    );
-    return {};
+): Promise<any | null> {
+  if (!observationStationsUrl) {
+    return null;
   }
+
+  const cacheKey = `stations:${observationStationsUrl}`;
+  const cached = getCachedValue(state.observationStationsCache, cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const response = await requestWithDedupe(cacheKey, observationStationsUrl);
+  if (response) {
+    setCachedValue(
+      state.observationStationsCache,
+      cacheKey,
+      response,
+      POINTS_STATIONS_CACHE_TTL_MS,
+    );
+  }
+  return response;
 }
 
 // Function to request NWS Points data based on latitude and longitude
 async function requestPoints(
   latitude: number,
   longitude: number,
-): Promise<any> {
-  try {
-    return await request(
-      `https://api.weather.gov/points/${latitude},${longitude}`,
-      {
-        headers,
-      },
-    );
-  } catch (error) {
-    console.error(
-      `Failed to request NWS Points data for ${latitude},${longitude}`,
-      error,
-    );
-    return {};
+): Promise<any | null> {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
   }
+
+  const normalizedLatitude = normalizeCoordinate(latitude);
+  const normalizedLongitude = normalizeCoordinate(longitude);
+  const cacheKey = `points:${normalizedLatitude},${normalizedLongitude}`;
+  const cached = getCachedValue(state.pointsCache, cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const response = await requestWithDedupe(
+    cacheKey,
+    `https://api.weather.gov/points/${normalizedLatitude},${normalizedLongitude}`,
+  );
+
+  if (response) {
+    setCachedValue(
+      state.pointsCache,
+      cacheKey,
+      response,
+      POINTS_STATIONS_CACHE_TTL_MS,
+    );
+  }
+  return response;
+}
+
+function getCachedValue<T>(
+  cache: Map<string, CacheEntry<T>>,
+  key: string,
+): T | null {
+  const entry = cache.get(key);
+  if (!entry) {
+    return null;
+  }
+
+  if (Date.now() >= entry.expiresAt) {
+    cache.delete(key);
+    return null;
+  }
+
+  return entry.value;
+}
+
+function setCachedValue<T>(
+  cache: Map<string, CacheEntry<T>>,
+  key: string,
+  value: T,
+  ttlMs: number,
+): void {
+  cache.set(key, {
+    value,
+    expiresAt: Date.now() + ttlMs,
+  });
+}
+
+function normalizeCoordinate(value: number): string {
+  return value.toFixed(4);
+}
+
+function isNotFoundError(error: any): boolean {
+  const status =
+    error?.details?.httpStatus ??
+    error?.response?.status ??
+    error?.status ??
+    error?.httpStatus;
+
+  if (Number(status) === 404) {
+    return true;
+  }
+
+  return /\b404\b/.test(String(error?.message ?? ""));
+}
+
+async function requestWithDedupe(
+  cacheKey: string,
+  url: string,
+): Promise<any | null> {
+  const inFlight = state.inFlightRequests.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const requestPromise = (async () => {
+    try {
+      return await request(url, {
+        headers,
+      });
+    } catch (error) {
+      if (!isNotFoundError(error)) {
+        console.error(`Request failed for ${url}`, error);
+      }
+      return null;
+    } finally {
+      state.inFlightRequests.delete(cacheKey);
+    }
+  })();
+
+  state.inFlightRequests.set(cacheKey, requestPromise);
+  return requestPromise;
 }
 
 document.getElementById("toggle-dialog")?.addEventListener("click", () => {
