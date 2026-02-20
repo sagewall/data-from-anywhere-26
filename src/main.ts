@@ -275,10 +275,9 @@ async function createObservationStationsLayer(): Promise<void> {
   const allFeaturePromises = structuredStationData.features.map(
     async (feature: any) => {
       try {
-        // Get the station identifier, coordinates, and forecast URL from the feature properties and geometry
+        // Get the station identifier, latitude, and longitude from the feature properties and geometry
         const stationIdentifier = feature?.properties?.stationIdentifier;
         const [longitude, latitude] = feature?.geometry?.coordinates ?? [];
-        const stationForecastUrl = feature?.properties?.forecast;
 
         // If the station identifier is not defined, skip processing this feature
         if (!stationIdentifier) {
@@ -292,11 +291,9 @@ async function createObservationStationsLayer(): Promise<void> {
         // Request the latest observations and forecast data in parallel for the station
         const [observationProperties, forecastProperties] = await Promise.all([
           requestLatestObservations(stationIdentifier),
-          stationForecastUrl
-            ? requestForecastByUrl(stationForecastUrl)
-            : Number.isFinite(latitude) && Number.isFinite(longitude)
-              ? requestForecast(latitude, longitude)
-              : Promise.resolve(null),
+          Number.isFinite(latitude) && Number.isFinite(longitude)
+            ? requestForecast(latitude, longitude)
+            : Promise.resolve(null),
         ]);
 
         // Process the properties of the observations and forecast data to flatten nested objects and arrays,
