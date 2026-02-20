@@ -19,6 +19,7 @@ import "@esri/calcite-components/components/calcite-notice";
 import "@esri/calcite-components/components/calcite-shell";
 import "@esri/calcite-components/components/calcite-tooltip";
 import "./style.css";
+import WebStyleSymbol from "@arcgis/core/symbols/WebStyleSymbol";
 
 // Application state to keep track of layers
 const state = {
@@ -296,6 +297,13 @@ async function createObservationStationsLayer(): Promise<void> {
       }),
     )
   ).filter((info): info is NonNullable<typeof info> => info !== null);
+
+  // Add a default symbol for features without a valid current conditions icon URL
+  renderer.defaultSymbol = new WebStyleSymbol({
+    name: "Radio Tower_Large_3",
+    styleUrl:
+      "https://www.arcgis.com/sharing/rest/content/items/37da62fcdb854f8e8305c79e8b5023dc/data",
+  });
 
   // Set the renderer on the observation stations layer
   observationStationsLayer.renderer = renderer;
