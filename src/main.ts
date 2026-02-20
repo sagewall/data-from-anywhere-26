@@ -23,6 +23,7 @@ import "./style.css";
 // Application state to keep track of layers
 const state = {
   forecastLayer: null as GeoJSONLayer | null,
+  iconStatusCache: new Map<string, boolean>(),
   observationStationsLayer: null as GeoJSONLayer | null,
 };
 
@@ -279,10 +280,22 @@ async function createObservationStationsLayer(): Promise<void> {
   });
 
   // Map each unique value info to a new symbol created from the icon URL
-  renderer.uniqueValueInfos = renderer.uniqueValueInfos?.map((info) => {
-    info.symbol = createObservationStationsSymbol(String(info.value));
-    return info;
-  });
+  const uniqueValueInfos = renderer.uniqueValueInfos ?? [];
+  renderer.uniqueValueInfos = (
+    await Promise.all(
+      uniqueValueInfos.map(async (info) => {
+        const iconUrl = String(info.value ?? "").trim();
+        const iconIsAvailable = await isHttp200(iconUrl);
+
+        if (!iconIsAvailable) {
+          return null;
+        }
+
+        info.symbol = createObservationStationsSymbol(iconUrl);
+        return info;
+      }),
+    )
+  ).filter((info): info is NonNullable<typeof info> => info !== null);
 
   // Set the renderer on the observation stations layer
   observationStationsLayer.renderer = renderer;
@@ -408,6 +421,27 @@ function createObservationStationsSymbol(url: string): CIMSymbol {
       },
     },
   });
+}
+
+async function isHttp200(url: string): Promise<boolean> {
+  if (!url) {
+    return false;
+  }
+
+  const cached = state.iconStatusCache.get(url);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  try {
+    const response = await fetch(url, { method: "HEAD" });
+    const isOk = response.status === 200;
+    state.iconStatusCache.set(url, isOk);
+    return isOk;
+  } catch {
+    state.iconStatusCache.set(url, false);
+    return false;
+  }
 }
 
 // Function to create custom popup content for forecast and observation station features
