@@ -97,7 +97,12 @@ toggleDialogButton.addEventListener("click", () => {
 
 // Event listener for when the view extent changes
 viewElement.addEventListener("arcgisViewChange", () => {
+  // If the view is stationary after the change
   if (viewElement.stationary) {
+    // Remove the existing forecast layer if it exists, as it may no longer be relevant to the new view extent
+    removeExistingForecastLayer();
+
+    // Create or update the observation stations layer based on the new view center
     createObservationStationsLayer();
   }
 });
@@ -111,12 +116,7 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
   const { latitude, longitude } = mapPoint;
 
   // If there's an existing forecast layer, remove it before adding a new one
-  if (state.forecastLayer) {
-    viewElement.map?.layers.remove(state.forecastLayer);
-  }
-
-  // Clear the graphic from the Feature element to reset the popup content
-  featureElement.graphic = null;
+  removeExistingForecastLayer();
 
   // Perform a hit test to check if the click was on an existing station feature
   const hitTestResult = await viewElement.hitTest(event.detail, {
@@ -709,6 +709,17 @@ function processProperties(object: any, prefix = ""): any {
     }
   }
   return result;
+}
+
+function removeExistingForecastLayer(): void {
+  // If there's an existing forecast layer, remove it before adding a new one
+  if (state.forecastLayer) {
+    viewElement.map?.layers.remove(state.forecastLayer);
+    state.forecastLayer = null;
+  }
+
+  // Clear the graphic from the Feature element to reset the popup content
+  featureElement.graphic = null;
 }
 
 // Function to request forecast data from latitude and longitude
