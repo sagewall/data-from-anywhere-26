@@ -4,8 +4,9 @@ import GeoJSONLayer from "@arcgis/core/layers/GeoJSONLayer.js";
 import CustomContent from "@arcgis/core/popup/content/CustomContent.js";
 import SimpleRenderer from "@arcgis/core/renderers/SimpleRenderer.js";
 import request from "@arcgis/core/request.js";
+import { createRenderer } from "@arcgis/core/smartMapping/renderers/type.js";
+import CIMSymbol from "@arcgis/core/symbols/CIMSymbol";
 import SimpleFillSymbol from "@arcgis/core/symbols/SimpleFillSymbol.js";
-import WebStyleSymbol from "@arcgis/core/symbols/WebStyleSymbol.js";
 import "@arcgis/map-components/components/arcgis-feature";
 import "@arcgis/map-components/components/arcgis-map";
 import "@arcgis/map-components/components/arcgis-search";
@@ -266,16 +267,25 @@ async function createObservationStationsLayer(): Promise<void> {
         }),
       ],
     },
-    renderer: new SimpleRenderer({
-      symbol: new WebStyleSymbol({
-        name: "Radio Tower_Large_3",
-        styleUrl:
-          "https://www.arcgis.com/sharing/rest/content/items/37da62fcdb854f8e8305c79e8b5023dc/data",
-      }),
-    }),
     title: "NWS Observation Stations",
     url,
   });
+
+  // Create a renderer for the observation stations layer and set custom symbols based on the current conditions icon URL
+  const { renderer } = await createRenderer({
+    view: viewElement.view,
+    layer: observationStationsLayer,
+    field: "icon",
+  });
+
+  // Map each unique value info to a new symbol created from the icon URL
+  renderer.uniqueValueInfos = renderer.uniqueValueInfos?.map((info) => {
+    info.symbol = createObservationStationsSymbol(String(info.value));
+    return info;
+  });
+
+  // Set the renderer on the observation stations layer
+  observationStationsLayer.renderer = renderer;
 
   // If there's an existing observation stations layer, remove it before adding the new one
   if (state.observationStationsLayer) {
@@ -287,6 +297,117 @@ async function createObservationStationsLayer(): Promise<void> {
 
   // Add the new layer to the map if it is not null
   viewElement.map?.layers.add(state.observationStationsLayer);
+}
+
+// Function for creating a CIMSymbol for observation stations
+// using the current conditions icon URL
+function createObservationStationsSymbol(url: string): CIMSymbol {
+  return new CIMSymbol({
+    data: {
+      type: "CIMSymbolReference",
+      symbol: {
+        type: "CIMPointSymbol",
+        symbolLayers: [
+          {
+            type: "CIMVectorMarker",
+            enable: true,
+            anchorPoint: {
+              x: 0,
+              y: 0,
+            },
+            anchorPointUnits: "Relative",
+            size: 40,
+            frame: {
+              xmin: 0,
+              ymin: 0,
+              xmax: 17,
+              ymax: 17,
+            },
+            markerGraphics: [
+              {
+                type: "CIMMarkerGraphic",
+                geometry: {
+                  rings: [
+                    [
+                      [8.5, 0],
+                      [7.02, 0.13],
+                      [5.59, 0.51],
+                      [4.25, 1.14],
+                      [3.04, 1.99],
+                      [1.99, 3.04],
+                      [1.14, 4.25],
+                      [0.51, 5.59],
+                      [0.13, 7.02],
+                      [0, 8.5],
+                      [0.13, 9.98],
+                      [0.51, 11.41],
+                      [1.14, 12.75],
+                      [1.99, 13.96],
+                      [3.04, 15.01],
+                      [4.25, 15.86],
+                      [5.59, 16.49],
+                      [7.02, 16.87],
+                      [8.5, 17],
+                      [9.98, 16.87],
+                      [11.41, 16.49],
+                      [12.75, 15.86],
+                      [13.96, 15.01],
+                      [15.01, 13.96],
+                      [15.86, 12.75],
+                      [16.49, 11.41],
+                      [16.87, 9.98],
+                      [17, 8.5],
+                      [16.87, 7.02],
+                      [16.49, 5.59],
+                      [15.86, 4.25],
+                      [15.01, 3.04],
+                      [13.96, 1.99],
+                      [12.75, 1.14],
+                      [11.41, 0.51],
+                      [9.98, 0.13],
+                      [8.5, 0],
+                    ],
+                  ],
+                },
+                symbol: {
+                  type: "CIMPolygonSymbol",
+                  symbolLayers: [
+                    {
+                      type: "CIMSolidStroke",
+                      enable: true,
+                      capStyle: "Round",
+                      joinStyle: "Round",
+                      miterLimit: 10,
+                      width: 0.5,
+                      color: [0, 0, 0, 255],
+                    },
+                    {
+                      type: "CIMPictureMarker",
+                      enable: true,
+                      url,
+                      scaleX: 1,
+                      size: 20,
+                      markerPlacement: {
+                        type: "CIMMarkerPlacementPolygonCenter",
+                        method: "OnPolygon",
+                        offsetX: 0,
+                        offsetY: 0,
+                        clipAtBoundary: true,
+                        placePerPart: true,
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+            scaleSymbolsProportionally: true,
+            respectFrame: true,
+          },
+        ],
+        animations: [],
+      },
+    },
+  });
 }
 
 // Function to create custom popup content for forecast and observation station features
