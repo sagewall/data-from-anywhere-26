@@ -2,18 +2,22 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" type="image/svg+xml" href="/js-sdk.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>data-from-anywhere-26</title>
   </head>
   <body>
     <calcite-shell class="calcite-mode-auto">
       <calcite-navigation slot="header">
+        <img
+          alt="ArcGIS Maps SDK for JavaScript Logo"
+          class="navigation-img"
+          slot="logo"
+          src="/js-sdk.svg"
+        />
         <calcite-navigation-logo
-          alt="Application logo"
           description="Esri Developer & Technology Summit"
           heading="NWS Weather API GeoJSONLayer Demo"
-          icon="clustering"
           slot="logo"
         ></calcite-navigation-logo>
         <calcite-action
@@ -23,6 +27,7 @@
           text="About this application"
         ></calcite-action>
         <calcite-tooltip
+          class="navigation-img"
           close-on-click
           placement="bottom"
           reference-element="toggle-dialog"

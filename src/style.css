@@ -1,3 +1,7 @@
 arcgis-feature {
   max-width: 33vw;
 }
+
+.navigation-img {
+  padding: 0.5rem;
+}
