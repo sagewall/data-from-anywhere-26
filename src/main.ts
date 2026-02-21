@@ -32,6 +32,8 @@ const failedRequestCacheTimeToLive = 30 * 1000;
 const forecastCacheTimeToLive = 5 * 60 * 1000;
 const iconCacheTimeToLive = 30 * 60 * 1000;
 const iconFailureCacheTimeToLive = 2 * 60 * 1000;
+const iconHeadCheckAttempts = 2;
+const iconHeadRetryDelay = 300;
 const observationsCacheTimeToLive = 2 * 60 * 1000;
 const pointsStationsCacheTimeToLive = 10 * 60 * 1000;
 const requestTimeout = 8 * 1000;
@@ -232,28 +234,42 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
 
 // ---- Functions ----
 
-// Function to check if an icon URL returns an HTTP 200 status,
-// with a timeout and caching to avoid redundant checks
+// Function to check the status of an icon URL by performing a HEAD request with retries,
+// and caching the result to avoid redundant checks for the same URL in the future
 async function checkIconStatus(url: string): Promise<boolean> {
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => {
-    controller.abort();
-  }, requestTimeout);
-
   try {
-    const response = await fetch(url, {
-      method: "HEAD",
-      signal: controller.signal,
-    });
-    const isOk = response.status === 200;
-    setCachedValue(
-      state.iconStatusCache,
-      url,
-      isOk,
-      isOk ? iconCacheTimeToLive : iconFailureCacheTimeToLive,
-    );
-    return isOk;
-  } catch {
+    for (let attempt = 0; attempt < iconHeadCheckAttempts; attempt++) {
+      // Create an AbortController to enforce a timeout on the fetch request
+      const controller = new AbortController();
+
+      // Set a timeout to abort the fetch request if it takes longer than the specified request timeout
+      const timeoutId = window.setTimeout(() => {
+        controller.abort();
+      }, requestTimeout);
+
+      try {
+        // Perform a HEAD request to the icon URL to check if it returns an HTTP 200 status
+        const response = await fetch(url, {
+          method: "HEAD",
+          signal: controller.signal,
+        });
+
+        // If the response status is 200, cache the successful result and return true
+        if (response.status === 200) {
+          setCachedValue(state.iconStatusCache, url, true, iconCacheTimeToLive);
+          return true;
+        }
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+
+      // If the request failed or did not return a 200 status, wait for a specified delay before retrying,
+      if (attempt < iconHeadCheckAttempts - 1) {
+        await wait(iconHeadRetryDelay);
+      }
+    }
+
+    // If all attempts failed, cache the failure result and return false
     setCachedValue(
       state.iconStatusCache,
       url,
@@ -262,7 +278,7 @@ async function checkIconStatus(url: string): Promise<boolean> {
     );
     return false;
   } finally {
-    window.clearTimeout(timeoutId);
+    // Remove the in-flight check for this URL from the state to allow future checks if needed
     state.inFlightIconChecks.delete(url);
   }
 }
@@ -1043,5 +1059,13 @@ function setCachedValue<T>(
   cache.set(key, {
     value,
     expiresAt: Date.now() + ttlMs,
+  });
+}
+
+// Function to create a delay for a specified number of milliseconds,
+// used for retrying requests after a delay
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
   });
 }
