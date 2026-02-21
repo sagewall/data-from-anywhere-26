@@ -31,6 +31,7 @@ type CacheEntry<T> = {
 const failedRequestCacheTimeToLive = 30 * 1000;
 const forecastCacheTimeToLive = 5 * 60 * 1000;
 const iconCacheTimeToLive = 30 * 60 * 1000;
+const iconFailureCacheTimeToLive = 2 * 60 * 1000;
 const observationsCacheTimeToLive = 2 * 60 * 1000;
 const pointsStationsCacheTimeToLive = 10 * 60 * 1000;
 const requestTimeout = 8 * 1000;
@@ -107,7 +108,9 @@ viewElement.addEventListener("arcgisViewChange", () => {
   // If the view is stationary after the change
   if (viewElement.stationary) {
     // Create or update the observation stations layer based on the new view center
-    createObservationStationsLayer();
+    void createObservationStationsLayer().catch((error) => {
+      console.error("Failed to create observation stations layer", error);
+    });
   }
 });
 
@@ -132,7 +135,13 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
   // If the click was on an existing station feature, do not add a new forecast layer or update the popup content,
   // as the existing station's popup will handle that. Also, if latitude or longitude are not defined,
   // do not proceed with the forecast request.
-  if (hitTestResult.results.length > 0 || !latitude || !longitude) {
+  if (
+    hitTestResult.results.length > 0 ||
+    latitude == null ||
+    longitude == null ||
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude)
+  ) {
     return;
   }
 
@@ -237,10 +246,20 @@ async function checkIconStatus(url: string): Promise<boolean> {
       signal: controller.signal,
     });
     const isOk = response.status === 200;
-    setCachedValue(state.iconStatusCache, url, isOk, iconCacheTimeToLive);
+    setCachedValue(
+      state.iconStatusCache,
+      url,
+      isOk,
+      isOk ? iconCacheTimeToLive : iconFailureCacheTimeToLive,
+    );
     return isOk;
   } catch {
-    setCachedValue(state.iconStatusCache, url, false, iconCacheTimeToLive);
+    setCachedValue(
+      state.iconStatusCache,
+      url,
+      false,
+      iconFailureCacheTimeToLive,
+    );
     return false;
   } finally {
     window.clearTimeout(timeoutId);
