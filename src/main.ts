@@ -7,6 +7,7 @@ import request from "@arcgis/core/request.js";
 import { createRenderer } from "@arcgis/core/smartMapping/renderers/type.js";
 import CIMSymbol from "@arcgis/core/symbols/CIMSymbol";
 import SimpleFillSymbol from "@arcgis/core/symbols/SimpleFillSymbol.js";
+import WebStyleSymbol from "@arcgis/core/symbols/WebStyleSymbol";
 import "@arcgis/map-components/components/arcgis-feature";
 import "@arcgis/map-components/components/arcgis-map";
 import "@arcgis/map-components/components/arcgis-search";
@@ -19,7 +20,6 @@ import "@esri/calcite-components/components/calcite-notice";
 import "@esri/calcite-components/components/calcite-shell";
 import "@esri/calcite-components/components/calcite-tooltip";
 import "./style.css";
-import WebStyleSymbol from "@arcgis/core/symbols/WebStyleSymbol";
 
 // Type definition for cache entries, including the cached value and its expiration time
 type CacheEntry<T> = {
@@ -135,7 +135,7 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
   });
 
   // If the click was on an existing station feature, do not add a new forecast layer or update the popup content,
-  // as the existing station's popup will handle that. Also, if latitude or longitude are not defined,
+  // as the existing station's popup will handle that. Also, if latitude or longitude are missing or non-finite,
   // do not proceed with the forecast request.
   if (
     hitTestResult.results.length > 0 ||
@@ -150,6 +150,8 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
   // Request forecast data for the clicked location
   const forecast = await requestForecast(latitude, longitude);
 
+  // If the forecast data does not include the expected properties, do not proceed with creating the forecast layer or
+  // updating the popup content, as the necessary data is not available
   if (!forecast?.data?.properties) {
     return;
   }
@@ -170,9 +172,12 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
   // Create a URL for the Blob
   const url = URL.createObjectURL(blob);
 
+  // Revoke the previous forecast layer URL to free up memory, if it exists
   if (state.forecastLayerUrl) {
     URL.revokeObjectURL(state.forecastLayerUrl);
   }
+
+  // Update the state with the new forecast layer URL
   state.forecastLayerUrl = url;
 
   // Create a new GeoJSONLayer for the forecast data and add it to the map
@@ -260,6 +265,7 @@ async function checkIconStatus(url: string): Promise<boolean> {
           return true;
         }
       } finally {
+        // Clear the timeout to avoid unnecessary aborts if the request completed in time
         window.clearTimeout(timeoutId);
       }
 
@@ -285,24 +291,17 @@ async function checkIconStatus(url: string): Promise<boolean> {
 
 // Function to create the observation stations layer based on the current view center
 async function createObservationStationsLayer(): Promise<void> {
-  // Ensure the view center is defined before making requests
-  if (!viewElement.center) {
-    console.error("View center is not defined.");
-    return;
-  }
-
   // Get the latitude and longitude of the view center
   const centerLatitude = viewElement.center.latitude;
   const centerLongitude = viewElement.center.longitude;
 
-  // Validate that the center coordinates are defined
-  if (centerLatitude == null || centerLongitude == null) {
-    console.error("View center coordinates are invalid.");
-    return;
-  }
-
-  // Validate that the center coordinates are finite numbers before proceeding with the requests
-  if (!Number.isFinite(centerLatitude) || !Number.isFinite(centerLongitude)) {
+  // Validate that the center coordinates are defined finite numbers before proceeding with requests
+  if (
+    centerLatitude == null ||
+    centerLongitude == null ||
+    !Number.isFinite(centerLatitude) ||
+    !Number.isFinite(centerLongitude)
+  ) {
     console.error("View center coordinates are invalid.");
     return;
   }
@@ -496,7 +495,7 @@ async function createObservationStationsLayer(): Promise<void> {
     // Update the state with the new layer reference
     state.observationStationsLayer = observationStationsLayer;
 
-    // Add the new layer to the map if it is not null
+    // Add the new layer to the map
     viewElement.map?.layers.add(state.observationStationsLayer);
 
     // Mark this key as successfully refreshed only after the layer has been built and added
@@ -601,7 +600,7 @@ function createObservationStationsSymbol(url: string): CIMSymbol {
                         method: "OnPolygon",
                         offsetX: 0,
                         offsetY: 0,
-                        // @ts-expect-error this is supported but missing from the type definition
+                        // @ts-expect-error clipAtBoundary is supported but missing from the type definition
                         clipAtBoundary: true,
                         placePerPart: true,
                       },
@@ -620,12 +619,14 @@ function createObservationStationsSymbol(url: string): CIMSymbol {
   });
 }
 
-// Function to perform a request to a given URL with deduplication and error handling,
+// Function to perform the actual network request and update request bookkeeping.
+// Called by requestWithDedupe after it handles deduplication checks.
 async function executeRequest(
   cacheKey: string,
   url: string,
 ): Promise<any | null> {
   try {
+    // Perform the network request to the specified URL with the defined headers and timeout
     const response = await request(url, {
       headers,
       timeout: requestTimeout,
@@ -633,6 +634,7 @@ async function executeRequest(
     state.failedRequestCache.delete(cacheKey);
     return response;
   } catch (error) {
+    // If the request fails, cache the failure state for this key to avoid immediate retries in the near future
     setCachedValue(
       state.failedRequestCache,
       cacheKey,
@@ -640,11 +642,13 @@ async function executeRequest(
       failedRequestCacheTimeToLive,
     );
 
+    // Log the error unless it's a 404, which is treated as a non-actionable miss
     if (!isNotFoundError(error)) {
       console.error(`Request failed for ${url}`, error);
     }
     return null;
   } finally {
+    // Remove the in-flight request for this URL from the state to allow future requests if needed
     state.inFlightRequests.delete(cacheKey);
   }
 }
@@ -674,7 +678,7 @@ function getCachedValue<T>(
 // Function to check if a given URL returns an HTTP 200 status,
 // with caching to avoid redundant network requests for the same URL
 async function isHttp200(url: string): Promise<boolean> {
-  // If the URL is not defined or does not start with http:// or https://, return false
+  // If the URL is not defined, return false
   if (!url) {
     return false;
   }
@@ -1011,13 +1015,12 @@ async function requestPoints(
   }
 
   // Return the points response, which may be null if the request failed
-  // or if the latitude/longitude were not defined
   return response;
 }
 
 // Function to perform a request with deduplication based on a cache key,
 // ensuring that only one request is made for the same key at a time,
-// and that the result is cached for future requests
+// while callers handle response caching for their specific data types
 async function requestWithDedupe(
   cacheKey: string,
   url: string,
@@ -1035,8 +1038,7 @@ async function requestWithDedupe(
     return inFlight;
   }
 
-  // Perform the request to the given URL, and if it fails with an error other than a 404 Not Found,
-  // log the error to the console for debugging purposes
+  // Perform the underlying network request
   const requestPromise = executeRequest(cacheKey, url);
 
   // Store the in-flight request promise in the state to deduplicate concurrent requests
