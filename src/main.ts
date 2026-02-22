@@ -137,18 +137,14 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
   // If the click was on an existing station feature, do not add a new forecast layer or update the popup content,
   // as the existing station's popup will handle that. Also, if latitude or longitude are missing or non-finite,
   // do not proceed with the forecast request.
-  if (
-    hitTestResult.results.length > 0 ||
-    latitude == null ||
-    longitude == null ||
-    !Number.isFinite(latitude) ||
-    !Number.isFinite(longitude)
-  ) {
+  const clickedCoordinates = getFiniteCoordinates(latitude, longitude);
+  if (hitTestResult.results.length > 0 || !clickedCoordinates) {
     return;
   }
+  const [clickedLatitude, clickedLongitude] = clickedCoordinates;
 
   // Request forecast data for the clicked location
-  const forecast = await requestForecast(latitude, longitude);
+  const forecast = await requestForecast(clickedLatitude, clickedLongitude);
 
   // If the forecast data does not include the expected properties, do not proceed with creating the forecast layer or
   // updating the popup content, as the necessary data is not available
@@ -185,7 +181,7 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
     copyright: "NWS",
     popupEnabled: false,
     popupTemplate: {
-      title: `Forecast for ${latitude.toFixed(3)}, ${longitude.toFixed(3)}`,
+      title: `Forecast for ${clickedLatitude.toFixed(3)}, ${clickedLongitude.toFixed(3)}`,
       content: [
         new CustomContent({
           outFields: [
@@ -292,22 +288,22 @@ async function checkIconStatus(url: string): Promise<boolean> {
 // Function to create the observation stations layer based on the current view center
 async function createObservationStationsLayer(): Promise<void> {
   // Get the latitude and longitude of the view center
-  const centerLatitude = viewElement.center.latitude;
-  const centerLongitude = viewElement.center.longitude;
+  const centerLatitude = viewElement.center?.latitude;
+  const centerLongitude = viewElement.center?.longitude;
 
   // Validate that the center coordinates are defined finite numbers before proceeding with requests
-  if (
-    centerLatitude == null ||
-    centerLongitude == null ||
-    !Number.isFinite(centerLatitude) ||
-    !Number.isFinite(centerLongitude)
-  ) {
+  const centerCoordinates = getFiniteCoordinates(
+    centerLatitude,
+    centerLongitude,
+  );
+  if (!centerCoordinates) {
     console.error("View center coordinates are invalid.");
     return;
   }
+  const [validatedCenterLatitude, validatedCenterLongitude] = centerCoordinates;
 
   // Create a unique key for the current view center to determine if we need to request new observation stations data
-  const observationStationsKey = `${normalizeCoordinate(centerLatitude)},${normalizeCoordinate(centerLongitude)}`;
+  const observationStationsKey = `${normalizeCoordinate(validatedCenterLatitude)},${normalizeCoordinate(validatedCenterLongitude)}`;
   if (
     observationStationsKey === state.lastObservationStationsKey ||
     observationStationsKey === state.inFlightObservationStationsKey
@@ -320,7 +316,10 @@ async function createObservationStationsLayer(): Promise<void> {
 
   try {
     // Request NWS points data for the current view center
-    const nwsPoints = await requestPoints(centerLatitude, centerLongitude);
+    const nwsPoints = await requestPoints(
+      validatedCenterLatitude,
+      validatedCenterLongitude,
+    );
     const observationStationsUrl =
       nwsPoints?.data?.properties?.observationStations;
 
@@ -621,7 +620,7 @@ function createObservationStationsSymbol(url: string): CIMSymbol {
 
 // Function to perform the actual network request and update request bookkeeping.
 // Called by requestWithDedupe after it handles deduplication checks.
-async function executeRequest(
+async function performRequest(
   cacheKey: string,
   url: string,
 ): Promise<any | null> {
@@ -673,6 +672,18 @@ function getCachedValue<T>(
 
   // If the cache entry is valid, return its value
   return entry.value;
+}
+
+// Function to validate and normalize coordinate inputs for downstream requests
+function getFiniteCoordinates(
+  latitude: number | null | undefined,
+  longitude: number | null | undefined,
+): [number, number] | null {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  return [Number(latitude), Number(longitude)];
 }
 
 // Function to check if a given URL returns an HTTP 200 status,
@@ -849,19 +860,15 @@ async function requestForecast(
   latitude: number,
   longitude: number,
 ): Promise<any | null> {
-  // If latitude or longitude are not defined, return null
-  if (latitude == null || longitude == null) {
+  const coordinates = getFiniteCoordinates(latitude, longitude);
+  if (!coordinates) {
     return null;
   }
-
-  // Validate that latitude and longitude are finite numbers before proceeding with the request
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-    return null;
-  }
+  const [validatedLatitude, validatedLongitude] = coordinates;
 
   // Request the NWS Points data for the given latitude and longitude to get the forecast URL,
   // and if successful, use that URL to request the forecast data
-  const points = await requestPoints(latitude, longitude);
+  const points = await requestPoints(validatedLatitude, validatedLongitude);
   const forecastUrl = points?.data?.properties?.forecast;
 
   // If the forecast URL is not defined in the Points response,
@@ -881,26 +888,13 @@ async function requestForecastByUrl(forecastUrl: string): Promise<any | null> {
     return null;
   }
 
-  // Check the cache first to see if we have a recent response for this forecast URL
   const cacheKey = `forecast:${forecastUrl}`;
-  const cached = getCachedValue(state.forecastCache, cacheKey);
-  if (cached !== null) {
-    return cached;
-  }
-
-  // Request the forecast data from the URL, and if successful, cache the response before returning it
-  const response = await requestWithDedupe(cacheKey, forecastUrl);
-  if (response) {
-    setCachedValue(
-      state.forecastCache,
-      cacheKey,
-      response,
-      forecastCacheTimeToLive,
-    );
-  }
-
-  // Return the forecast response,which may be null if the request failed or if the URL was not defined
-  return response;
+  return requestWithCache(
+    state.forecastCache,
+    cacheKey,
+    forecastUrl,
+    forecastCacheTimeToLive,
+  );
 }
 
 // Function to request latest observations for a station
@@ -915,28 +909,13 @@ async function requestLatestObservations(
   // Construct the URL for the latest observations endpoint using the station identifier
   const url = `https://api.weather.gov/stations/${stationIdentifier}/observations/latest`;
 
-  // Check the cache first to see if we have a recent response for this station's latest observations
   const cacheKey = `observations:${stationIdentifier}`;
-  const cached = getCachedValue(state.latestObservationsCache, cacheKey);
-  if (cached !== null) {
-    return cached;
-  }
-
-  // Request the latest observations data from the URL, and if successful,
-  // cache the response before returning it
-  const response = await requestWithDedupe(cacheKey, url);
-  if (response) {
-    setCachedValue(
-      state.latestObservationsCache,
-      cacheKey,
-      response,
-      observationsCacheTimeToLive,
-    );
-  }
-
-  // Return the latest observations response, which may be null if the request
-  // failed or if the station identifier was not defined
-  return response;
+  return requestWithCache(
+    state.latestObservationsCache,
+    cacheKey,
+    url,
+    observationsCacheTimeToLive,
+  );
 }
 
 // Function to request observation stations from NWS Points data
@@ -948,27 +927,13 @@ async function requestObservationStations(
     return null;
   }
 
-  // Check the cache first to see if we have a recent response for this observation stations URL
   const cacheKey = `stations:${observationStationsUrl}`;
-  const cached = getCachedValue(state.observationStationsCache, cacheKey);
-  if (cached !== null) {
-    return cached;
-  }
-
-  // Request the observation stations data from the URL, and if successful, cache the response before returning it
-  const response = await requestWithDedupe(cacheKey, observationStationsUrl);
-  if (response) {
-    setCachedValue(
-      state.observationStationsCache,
-      cacheKey,
-      response,
-      pointsStationsCacheTimeToLive,
-    );
-  }
-
-  // Return the observation stations response, which may be null
-  // if the request failed or if the URL was not defined
-  return response;
+  return requestWithCache(
+    state.observationStationsCache,
+    cacheKey,
+    observationStationsUrl,
+    pointsStationsCacheTimeToLive,
+  );
 }
 
 // Function to request NWS Points data based on latitude and longitude
@@ -976,45 +941,42 @@ async function requestPoints(
   latitude: number,
   longitude: number,
 ): Promise<any | null> {
-  // If latitude or longitude are not defined, return null
-  if (latitude == null || longitude == null) {
+  const coordinates = getFiniteCoordinates(latitude, longitude);
+  if (!coordinates) {
     return null;
   }
-
-  // Validate that latitude and longitude are finite numbers before proceeding with the request
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-    return null;
-  }
+  const [validatedLatitude, validatedLongitude] = coordinates;
 
   // Normalize the latitude and longitude to a fixed number of decimal places to create a consistent cache key,
-  const normalizedLatitude = normalizeCoordinate(latitude);
-  const normalizedLongitude = normalizeCoordinate(longitude);
+  const normalizedLatitude = normalizeCoordinate(validatedLatitude);
+  const normalizedLongitude = normalizeCoordinate(validatedLongitude);
   const cacheKey = `points:${normalizedLatitude},${normalizedLongitude}`;
 
-  // Check the cache first to see if we already have a recent points response for this coordinate
-  const cached = getCachedValue(state.pointsCache, cacheKey);
+  return requestWithCache(
+    state.pointsCache,
+    cacheKey,
+    `https://api.weather.gov/points/${normalizedLatitude},${normalizedLongitude}`,
+    pointsStationsCacheTimeToLive,
+  );
+}
+
+// Function to perform a cached request flow for endpoint responses
+async function requestWithCache(
+  cache: Map<string, CacheEntry<any>>,
+  cacheKey: string,
+  url: string,
+  ttlMs: number,
+): Promise<any | null> {
+  const cached = getCachedValue(cache, cacheKey);
   if (cached !== null) {
     return cached;
   }
 
-  // Request the NWS Points data for the given latitude and longitude, and if successful,
-  // cache the response before returning it
-  const response = await requestWithDedupe(
-    cacheKey,
-    `https://api.weather.gov/points/${normalizedLatitude},${normalizedLongitude}`,
-  );
-
-  // If the response is valid, cache it with the appropriate TTL before returning it
+  const response = await requestWithDedupe(cacheKey, url);
   if (response) {
-    setCachedValue(
-      state.pointsCache,
-      cacheKey,
-      response,
-      pointsStationsCacheTimeToLive,
-    );
+    setCachedValue(cache, cacheKey, response, ttlMs);
   }
 
-  // Return the points response, which may be null if the request failed
   return response;
 }
 
@@ -1039,7 +1001,7 @@ async function requestWithDedupe(
   }
 
   // Perform the underlying network request
-  const requestPromise = executeRequest(cacheKey, url);
+  const requestPromise = performRequest(cacheKey, url);
 
   // Store the in-flight request promise in the state to deduplicate concurrent requests
   // for the same cache key
