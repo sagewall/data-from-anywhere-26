@@ -703,7 +703,6 @@ function createObservationStationsSymbol(url: string): CIMSymbol {
                         method: "OnPolygon",
                         offsetX: 0,
                         offsetY: 0,
-                        // @ts-expect-error clipAtBoundary is supported but missing from the type definition
                         clipAtBoundary: true,
                         placePerPart: true,
                       },
