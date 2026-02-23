@@ -46,6 +46,18 @@ type GeoJSONFeature = {
   properties?: Record<string, unknown>;
 };
 
+// Relative location shape from NWS points response.
+type RelativeLocation = {
+  city: string;
+  state: string;
+};
+
+// Shared empty relative-location value used for fallbacks.
+const emptyRelativeLocation: RelativeLocation = {
+  city: "",
+  state: "",
+};
+
 // ArcGIS request error shape used by error handling.
 type RequestErrorLike = {
   details?: { httpStatus?: number };
@@ -54,7 +66,7 @@ type RequestErrorLike = {
   name?: string;
 };
 
-// Cache Time to Live and request timeout values in milliseconds.
+// Cache TTL and request timeout values in milliseconds.
 const failedRequestCacheTimeToLive = 30 * 1000;
 const forecastCacheTimeToLive = 5 * 60 * 1000;
 const iconCacheTimeToLive = 30 * 60 * 1000;
@@ -90,22 +102,22 @@ const state = {
   pointsCache: new Map<string, CacheEntry<ApiResponse>>(),
 };
 
-// Reference the arcgis-feature element.
+// Get the arcgis-feature element.
 const featureElement = document.querySelector(
   "arcgis-feature",
 )! as HTMLArcgisFeatureElement;
 
-// Reference the map loader element.
+// Get the map loader element.
 const loaderElement = document.querySelector(
   "calcite-loader",
 ) as HTMLCalciteLoaderElement | null;
 
-// Reference the toggle dialog button.
+// Get the toggle dialog button.
 const toggleDialogButton = document.querySelector(
   "#toggle-dialog",
 ) as HTMLButtonElement;
 
-// Reference the arcgis-map element.
+// Get the arcgis-map element.
 const viewElement = document.querySelector(
   "arcgis-map",
 )! as HTMLArcgisMapElement;
@@ -130,7 +142,7 @@ await viewElement.viewOnReady();
 viewElement.constraints.minZoom = 9;
 viewElement.constraints.maxZoom = 11;
 
-// ---- Event Listeners ----
+// ---- Event listeners ----
 
 // Toggle the dialog when the button is clicked.
 toggleDialogButton.addEventListener("click", () => {
@@ -185,7 +197,11 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
   const [clickedLatitude, clickedLongitude] = clickedCoordinates;
 
   // Request forecast data for the clicked location.
-  const forecast = await requestForecast(clickedLatitude, clickedLongitude);
+  const { forecast, relativeLocation } =
+    await requestForecastWithRelativeLocation(
+      clickedLatitude,
+      clickedLongitude,
+    );
 
   // Stop if forecast properties are missing.
   if (!forecast?.data?.properties) {
@@ -198,6 +214,18 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
   // Flatten nested forecast properties.
   structuredForecastData.properties = processProperties(
     forecast.data.properties,
+  );
+
+  // Add relative location properties to the forecast for use in popups.
+  structuredForecastData.properties.relativeLocation_city =
+    relativeLocation.city;
+  structuredForecastData.properties.relativeLocation_state =
+    relativeLocation.state;
+
+  const forecastTitle = formatForecastTitle(
+    relativeLocation,
+    clickedLatitude,
+    clickedLongitude,
   );
 
   // Create a Blob from the processed data.
@@ -246,10 +274,12 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
             "periods_5_name",
             "periods_5_detailedForecast",
             "periods_5_icon",
+            "relativeLocation_city",
+            "relativeLocation_state",
           ],
         }),
       ],
-      title: `Forecast for ${clickedLatitude.toFixed(3)}, ${clickedLongitude.toFixed(3)}`,
+      title: forecastTitle,
     },
     renderer: new SimpleRenderer({
       symbol: new SimpleFillSymbol({
@@ -278,7 +308,7 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
 
 // ---- Functions ----
 
-// Increment the in-flight HTTP request count and show the loader.
+// Increment the in-flight HTTP request count and update loader visibility.
 function beginHttpRequest(): void {
   state.activeHttpRequestCount += 1;
   updateLoaderVisibility();
@@ -346,7 +376,7 @@ async function checkIconStatus(url: string): Promise<boolean> {
   }
 }
 
-// Create the observation stations layer from the current view center.
+// Create or refresh the observation stations layer from the current view center.
 async function createObservationStationsLayer(): Promise<void> {
   // Read center coordinates.
   const centerLatitude = viewElement.center?.latitude;
@@ -411,7 +441,7 @@ async function createObservationStationsLayer(): Promise<void> {
       return;
     }
 
-    const allFeaturePromises = stationFeatures.map(
+    const featureEnrichmentPromises = stationFeatures.map(
       async (feature: GeoJSONFeature) => {
         try {
           // Read station identifier and feature coordinates.
@@ -463,7 +493,7 @@ async function createObservationStationsLayer(): Promise<void> {
     );
 
     // Wait for all feature enrichment to finish.
-    await Promise.all(allFeaturePromises);
+    await Promise.all(featureEnrichmentPromises);
 
     // Create a Blob from the processed data.
     const blob = new Blob([JSON.stringify(structuredStationData)], {
@@ -691,6 +721,29 @@ function createObservationStationsSymbol(url: string): CIMSymbol {
   });
 }
 
+// Create a forecast/current-conditions list item and optional icon.
+function createPopupListItem(
+  label: string,
+  description: string,
+  iconUrl: string,
+  iconAlt: string,
+): HTMLCalciteListItemElement {
+  const listItem = document.createElement("calcite-list-item");
+  listItem.label = label;
+  listItem.description = description;
+
+  if (iconUrl) {
+    const img = document.createElement("img");
+    img.src = iconUrl;
+    img.alt = iconAlt;
+    img.style.maxWidth = "86px";
+    img.slot = "content-start";
+    listItem.appendChild(img);
+  }
+
+  return listItem;
+}
+
 // Decrement the in-flight HTTP request count.
 function endHttpRequest(): void {
   if (state.activeHttpRequestCount > 0) {
@@ -699,12 +752,32 @@ function endHttpRequest(): void {
   updateLoaderVisibility();
 }
 
+// Build a forecast popup title with relative-location fallback.
+function formatForecastTitle(
+  relativeLocation: RelativeLocation,
+  latitude: number,
+  longitude: number,
+): string {
+  const city = relativeLocation.city.trim();
+  const state = relativeLocation.state.trim();
+
+  if (city && state) {
+    return `Forecast for ${city}, ${state}`;
+  }
+
+  if (city) {
+    return `Forecast for ${city}`;
+  }
+
+  return `Forecast for ${latitude.toFixed(3)}, ${longitude.toFixed(3)}`;
+}
+
 // Read a cached value and evict expired entries.
 function getCachedValue<T>(
   cache: Map<string, CacheEntry<T>>,
   key: string,
 ): T | null {
-  // Read the cache entry for the key.
+  // Read the cache entry.
   const entry = cache.get(key);
   if (!entry) {
     return null;
@@ -720,9 +793,41 @@ function getCachedValue<T>(
   return entry.value;
 }
 
+// Convert unknown input to a finite number when possible.
+function getFiniteNumberOrNull(value: unknown): number | null {
+  const parsedNumber = Number(value);
+  return Number.isFinite(parsedNumber) ? parsedNumber : null;
+}
+
+// Parse and normalize relative location from a points response.
+function getRelativeLocationFromPoints(
+  points: ApiResponse | null,
+): RelativeLocation {
+  // NWS points payload nests relative location under an untyped properties object.
+  const properties = (
+    points?.data?.properties?.relativeLocation as {
+      properties?: unknown;
+    } | null
+  )?.properties;
+  if (!properties || typeof properties !== "object") {
+    return emptyRelativeLocation;
+  }
+
+  const { city, state } = properties as { city?: unknown; state?: unknown };
+  return {
+    city: getTrimmedStringOrEmpty(city),
+    state: getTrimmedStringOrEmpty(state),
+  };
+}
+
+// Convert unknown input to a trimmed string when the input is a string.
+function getTrimmedStringOrEmpty(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 // Check whether a URL returns HTTP 200, with caching.
 async function isHttp200(url: string): Promise<boolean> {
-  const normalizedUrl = url.trim();
+  const normalizedUrl = getTrimmedStringOrEmpty(url);
 
   // Reject empty URLs.
   if (!normalizedUrl) {
@@ -759,7 +864,7 @@ async function isHttp200(url: string): Promise<boolean> {
   return checkPromise;
 }
 
-// Determine if an error represents HTTP 404.
+// Determine whether an error represents HTTP 404.
 function isNotFoundError(error: unknown): boolean {
   // Read status details from the request error.
   const requestError = error as RequestErrorLike;
@@ -820,46 +925,24 @@ function popupContentCreator(
 ): HTMLCalciteListElement {
   // Read attributes from the popup graphic.
   const attributes = event.graphic.attributes;
-  // Coerce unknown values to finite numbers for safe math and formatting.
-  const toFiniteNumber = (value: unknown): number | null => {
-    const parsedNumber = Number(value);
-    return Number.isFinite(parsedNumber) ? parsedNumber : null;
-  };
-  // Coerce unknown values to trimmed strings and normalize null/undefined to empty.
-  const toNonEmptyString = (value: unknown): string => {
-    if (value == null) {
-      return "";
-    }
-    return String(value).trim();
-  };
 
   // Build the list container.
   const list = document.createElement("calcite-list");
 
   // Add current conditions when temperature or description is available.
-  const temperatureValue = toFiniteNumber(attributes.temperature_value);
-  const textDescription = toNonEmptyString(attributes.textDescription);
+  const temperatureValue = getFiniteNumberOrNull(attributes.temperature_value);
+  const textDescription = getTrimmedStringOrEmpty(attributes.textDescription);
   if (temperatureValue !== null || textDescription) {
-    const currentConditionsListItem =
-      document.createElement("calcite-list-item");
-    currentConditionsListItem.label = "Current Conditions";
     const temperature =
       temperatureValue !== null ? (temperatureValue * 9) / 5 + 32 : null;
     const description = `${textDescription ? textDescription + " " : "Unknown "}${temperature !== null ? temperature.toFixed(1) + " °F" : ""}`;
-    currentConditionsListItem.description = description;
-
-    // Add the current-conditions icon when available.
-    const currentConditionIcon = toNonEmptyString(attributes.icon);
-    if (currentConditionIcon) {
-      const img = document.createElement("img");
-      img.src = currentConditionIcon;
-      img.alt = attributes.textDescription
-        ? String(attributes.textDescription)
-        : "Current Conditions Icon";
-      img.style.maxWidth = "86px";
-      img.slot = "content-start";
-      currentConditionsListItem.appendChild(img);
-    }
+    const currentConditionsIcon = getTrimmedStringOrEmpty(attributes.icon);
+    const currentConditionsListItem = createPopupListItem(
+      "Current Conditions",
+      description,
+      currentConditionsIcon,
+      textDescription || "Current Conditions Icon",
+    );
 
     // Add current conditions to the list.
     list.appendChild(currentConditionsListItem);
@@ -867,24 +950,18 @@ function popupContentCreator(
 
   // Add up to six forecast period items.
   for (let i = 0; i < 6; i++) {
-    const periodName = toNonEmptyString(attributes[`periods_${i}_name`]);
-    const periodForecast = toNonEmptyString(
+    const periodName = getTrimmedStringOrEmpty(attributes[`periods_${i}_name`]);
+    const periodForecast = getTrimmedStringOrEmpty(
       attributes[`periods_${i}_detailedForecast`],
     );
-    const periodIcon = toNonEmptyString(attributes[`periods_${i}_icon`]);
+    const periodIcon = getTrimmedStringOrEmpty(attributes[`periods_${i}_icon`]);
 
-    const forecastListItem = document.createElement("calcite-list-item");
-    forecastListItem.label = periodName || `Period ${i + 1}`;
-    forecastListItem.description = periodForecast || "No forecast available";
-
-    if (periodIcon) {
-      const img = document.createElement("img");
-      img.src = periodIcon;
-      img.alt = periodForecast || `Icon for Period ${i + 1}`;
-      img.style.maxWidth = "86px";
-      img.slot = "content-start";
-      forecastListItem.appendChild(img);
-    }
+    const forecastListItem = createPopupListItem(
+      periodName || `Period ${i + 1}`,
+      periodForecast || "No forecast available",
+      periodIcon,
+      periodForecast || `Icon for Period ${i + 1}`,
+    );
 
     list.appendChild(forecastListItem);
   }
@@ -904,34 +981,40 @@ function processProperties(
   // Flatten each key-value pair based on value type.
   for (const [key, value] of Object.entries(object)) {
     const newKey = prefix ? `${prefix}_${key}` : key;
+
     if (Array.isArray(value)) {
       value.forEach((item, index) => {
+        const itemKey = `${newKey}_${index}`;
         if (item && typeof item === "object") {
           Object.assign(
             result,
-            processProperties(
-              item as Record<string, unknown>,
-              `${newKey}_${index}`,
-            ),
+            processProperties(item as Record<string, unknown>, itemKey),
           );
-        } else {
-          result[`${newKey}_${index}`] = String(item);
+          // Return from this callback iteration after recursively flattening.
+          return;
         }
+
+        result[itemKey] = String(item);
       });
-    } else if (value && typeof value === "object") {
+      continue;
+    }
+
+    if (value && typeof value === "object") {
       Object.assign(
         result,
         processProperties(value as Record<string, unknown>, newKey),
       );
-    } else {
-      result[newKey] = value == null ? "" : String(value);
+      continue;
     }
+
+    result[newKey] = value == null ? "" : String(value);
   }
 
   // Return flattened properties.
   return result;
 }
 
+// Remove the existing forecast layer and clear related UI state.
 function removeExistingForecastLayer(): void {
   // Remove any existing forecast layer.
   if (state.forecastLayer) {
@@ -954,30 +1037,15 @@ async function requestForecast(
   latitude: number,
   longitude: number,
 ): Promise<ApiResponse | null> {
-  const coordinates = tryGetFiniteCoordinates(latitude, longitude);
-  if (!coordinates) {
-    return null;
-  }
-  const [validatedLatitude, validatedLongitude] = coordinates;
-
-  // Request points data, then read the forecast URL.
-  const points = await requestPoints(validatedLatitude, validatedLongitude);
-  const forecastUrlValue = points?.data?.properties?.forecast;
-
-  // Stop when points response has no forecast URL.
-  if (typeof forecastUrlValue !== "string" || !forecastUrlValue) {
-    return null;
-  }
-
-  // Request forecast data by URL.
-  return requestForecastByUrl(forecastUrlValue);
+  return (await requestForecastWithRelativeLocation(latitude, longitude))
+    .forecast;
 }
 
 // Request forecast data by URL.
 async function requestForecastByUrl(
   forecastUrl: string,
 ): Promise<ApiResponse | null> {
-  const normalizedForecastUrl = forecastUrl.trim();
+  const normalizedForecastUrl = getTrimmedStringOrEmpty(forecastUrl);
 
   // Reject empty forecast URLs.
   if (!normalizedForecastUrl) {
@@ -993,11 +1061,49 @@ async function requestForecastByUrl(
   );
 }
 
+// Request forecast data and relative location by latitude/longitude.
+async function requestForecastWithRelativeLocation(
+  latitude: number,
+  longitude: number,
+): Promise<{
+  forecast: ApiResponse | null;
+  relativeLocation: RelativeLocation;
+}> {
+  const coordinates = tryGetFiniteCoordinates(latitude, longitude);
+  if (!coordinates) {
+    return {
+      forecast: null,
+      relativeLocation: emptyRelativeLocation,
+    };
+  }
+  const [validatedLatitude, validatedLongitude] = coordinates;
+
+  // Request points data, then read the forecast URL.
+  const points = await requestPoints(validatedLatitude, validatedLongitude);
+  const forecastUrlValue = points?.data?.properties?.forecast;
+  const relativeLocation = getRelativeLocationFromPoints(points);
+
+  // Stop when points response has no forecast URL.
+  if (typeof forecastUrlValue !== "string" || !forecastUrlValue) {
+    return {
+      forecast: null,
+      relativeLocation,
+    };
+  }
+
+  // Request forecast data by URL.
+  return {
+    forecast: await requestForecastByUrl(forecastUrlValue),
+    relativeLocation,
+  };
+}
+
 // Request latest observations for a station.
 async function requestLatestObservations(
   stationIdentifier: string,
 ): Promise<ApiResponse | null> {
-  const normalizedStationIdentifier = stationIdentifier.trim();
+  const normalizedStationIdentifier =
+    getTrimmedStringOrEmpty(stationIdentifier);
 
   // Reject empty station identifiers.
   if (!normalizedStationIdentifier) {
@@ -1020,7 +1126,9 @@ async function requestLatestObservations(
 async function requestObservationStations(
   observationStationsUrl: string,
 ): Promise<ApiResponse | null> {
-  const normalizedObservationStationsUrl = observationStationsUrl.trim();
+  const normalizedObservationStationsUrl = getTrimmedStringOrEmpty(
+    observationStationsUrl,
+  );
 
   // Reject empty stations URLs.
   if (!normalizedObservationStationsUrl) {
@@ -1075,9 +1183,11 @@ async function requestWithCache(
 
   // Otherwise request the resource and cache successful responses.
   const response = await requestWithDeduplication(cacheKey, url);
-  if (response) {
-    setCachedValue(cache, cacheKey, response, ttlMs);
+  if (!response) {
+    return null;
   }
+
+  setCachedValue(cache, cacheKey, response, ttlMs);
 
   return response;
 }
@@ -1088,21 +1198,20 @@ async function requestWithDeduplication(
   url: string,
 ): Promise<ApiResponse | null> {
   // Skip immediate retry for recently failed keys.
-  const recentlyFailed = getCachedValue(state.failedRequestCache, cacheKey);
-  if (recentlyFailed === true) {
+  if (getCachedValue(state.failedRequestCache, cacheKey) === true) {
     return null;
   }
 
   // Reuse existing in-flight request promises.
-  const inFlight = state.inFlightRequests.get(cacheKey);
-  if (inFlight) {
-    return inFlight;
+  const inFlightRequest = state.inFlightRequests.get(cacheKey);
+  if (inFlightRequest) {
+    return inFlightRequest;
   }
 
   // Start the underlying network request.
   const requestPromise = performRequest(cacheKey, url);
 
-  // Track in-flight request for this key.
+  // Track in-flight request for this key. Cleanup happens in performRequest finally.
   state.inFlightRequests.set(cacheKey, requestPromise);
 
   // Return the shared request promise.
