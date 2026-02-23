@@ -13,8 +13,10 @@ import "@arcgis/map-components/components/arcgis-feature";
 import "@arcgis/map-components/components/arcgis-map";
 import "@arcgis/map-components/components/arcgis-search";
 import "@esri/calcite-components/components/calcite-action";
+import "@esri/calcite-components/components/calcite-alert";
 import "@esri/calcite-components/components/calcite-dialog";
 import "@esri/calcite-components/components/calcite-link";
+import "@esri/calcite-components/components/calcite-loader";
 import "@esri/calcite-components/components/calcite-navigation";
 import "@esri/calcite-components/components/calcite-navigation-logo";
 import "@esri/calcite-components/components/calcite-notice";
@@ -71,6 +73,7 @@ const headers = {
 
 // App state for layers, caches, and in-flight requests.
 const state = {
+  activeHttpRequestCount: 0,
   failedRequestCache: new Map<string, CacheEntry<boolean>>(),
   forecastCache: new Map<string, CacheEntry<ApiResponse>>(),
   forecastLayer: null as GeoJSONLayer | null,
@@ -92,6 +95,11 @@ const featureElement = document.querySelector(
   "arcgis-feature",
 )! as HTMLArcgisFeatureElement;
 
+// Reference the map loader element.
+const loaderElement = document.querySelector(
+  "calcite-loader",
+) as HTMLCalciteLoaderElement | null;
+
 // Reference the toggle dialog button.
 const toggleDialogButton = document.querySelector(
   "#toggle-dialog",
@@ -101,6 +109,11 @@ const toggleDialogButton = document.querySelector(
 const viewElement = document.querySelector(
   "arcgis-map",
 )! as HTMLArcgisMapElement;
+
+// Ensure loader starts hidden.
+if (loaderElement) {
+  loaderElement.hidden = true;
+}
 
 // Create the WebMap instance.
 const webMap = new WebMap({
@@ -114,7 +127,7 @@ viewElement.map = webMap;
 await viewElement.viewOnReady();
 
 // Set zoom constraints.
-viewElement.constraints.minZoom = 11;
+viewElement.constraints.minZoom = 9;
 viewElement.constraints.maxZoom = 11;
 
 // ---- Event Listeners ----
@@ -265,6 +278,12 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
 
 // ---- Functions ----
 
+// Increment the in-flight HTTP request count and show the loader.
+function beginHttpRequest(): void {
+  state.activeHttpRequestCount += 1;
+  updateLoaderVisibility();
+}
+
 // Check an icon URL with retries and cache the result.
 async function checkIconStatus(url: string): Promise<boolean> {
   try {
@@ -279,10 +298,15 @@ async function checkIconStatus(url: string): Promise<boolean> {
 
       try {
         // Send a HEAD request to validate icon availability.
-        await request(url, {
-          method: "head",
-          signal: controller.signal,
-        });
+        beginHttpRequest();
+        try {
+          await request(url, {
+            method: "head",
+            signal: controller.signal,
+          });
+        } finally {
+          endHttpRequest();
+        }
 
         // Cache successful checks.
         setCachedValue(state.iconStatusCache, url, true, iconCacheTimeToLive);
@@ -667,6 +691,14 @@ function createObservationStationsSymbol(url: string): CIMSymbol {
   });
 }
 
+// Decrement the in-flight HTTP request count.
+function endHttpRequest(): void {
+  if (state.activeHttpRequestCount > 0) {
+    state.activeHttpRequestCount -= 1;
+  }
+  updateLoaderVisibility();
+}
+
 // Read a cached value and evict expired entries.
 function getCachedValue<T>(
   cache: Map<string, CacheEntry<T>>,
@@ -752,6 +784,7 @@ async function performRequest(
 ): Promise<ApiResponse | null> {
   try {
     // Execute the JSON request with configured headers and timeout.
+    beginHttpRequest();
     const response = await request(url, {
       headers,
       responseType: "json",
@@ -774,6 +807,8 @@ async function performRequest(
     }
     return null;
   } finally {
+    endHttpRequest();
+
     // Clear in-flight state for this key.
     state.inFlightRequests.delete(cacheKey);
   }
@@ -1097,6 +1132,14 @@ function tryGetFiniteCoordinates(
   }
 
   return [Number(latitude), Number(longitude)];
+}
+
+// Keep loader visibility in sync with in-flight HTTP requests.
+function updateLoaderVisibility(): void {
+  if (!loaderElement) {
+    return;
+  }
+  loaderElement.hidden = state.activeHttpRequestCount <= 0;
 }
 
 // Sleep for the provided number of milliseconds.

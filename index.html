@@ -36,6 +36,11 @@
         >
       </calcite-navigation>
       <arcgis-map center="-104.9903,39.7392" zoom="10">
+        <calcite-loader
+          hidden
+          label="Loading weather data"
+          type="indeterminate"
+        ></calcite-loader>
         <arcgis-search slot="top-right"></arcgis-search>
         <arcgis-feature slot="top-left"></arcgis-feature>
       </arcgis-map>
@@ -88,6 +93,22 @@
         >
       </div>
     </calcite-dialog>
+    <calcite-alert
+      icon="partly-cloudy"
+      kind="brand"
+      open
+      label="A report alert"
+    >
+      <div slot="title">Instructions</div>
+      <div slot="message">
+        <ul>
+          <li>Click on a weather station to view the current conditions.</li>
+          <li>
+            Click anywhere on the map to view the forecast for that location.
+          </li>
+        </ul>
+      </div>
+    </calcite-alert>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
