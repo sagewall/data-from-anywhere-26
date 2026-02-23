@@ -9,9 +9,14 @@ https://sagewall.github.io/data-from-anywhere-26/
 ## Features
 
 - Interactive map with Esri ArcGIS Web Components
-- Displays NWS observation stations and real-time weather forecasts
-- Click anywhere on the map to get a detailed forecast for that location
-- Popups show current conditions and multi-period forecasts
+- Dynamic NWS observation-station layer refreshes as the map view changes
+- Click a station for current conditions plus multi-period forecast details
+- Click anywhere on the map to generate a forecast polygon for that location
+- Popups combine current conditions, forecast periods, and weather icons
+- Relative-location aware forecast titles (city/state when available)
+- Loader state tied to active HTTP requests for better network feedback
+- Request deduplication and TTL-based caching for points, stations, observations, and forecasts
+- Icon availability checks with retry + short failure cache to avoid broken popup imagery
 - Uses modern web technologies (Vite, TypeScript, Calcite Design System)
 
 ## Technologies Used
@@ -59,8 +64,18 @@ npm run build
 ## Usage
 
 - Pan and zoom the map to explore different areas.
-- Click on the map to view a weather forecast for that location.
-- Observation stations are shown with custom icons; click them for current conditions and forecasts.
+- Observation stations refresh based on the current map center once navigation settles.
+- Click on a station to view current conditions and up to six forecast periods.
+- Click elsewhere on the map to view the forecast for that location.
+- Use the information action in the top navigation to open the in-app About dialog.
+
+## Data Flow Highlights
+
+- NWS `points` responses are used to discover both forecast and observation-station endpoints.
+- Station features are enriched with latest observations and forecast data before rendering.
+- Nested API properties are flattened into popup-friendly attributes at runtime.
+- In-flight request tracking prevents duplicate network calls for the same cache key.
+- Failed requests are briefly cached to reduce immediate retry storms.
 
 ## Project Structure
 
@@ -69,6 +84,11 @@ npm run build
 - `index.html` — Main HTML file
 - `vite.config.js` — Vite configuration
 - `tsconfig.json` — TypeScript configuration
+
+## Notes
+
+- Weather data is provided by the NWS Weather API and can be subject to service availability and rate limits.
+- This demo is optimized for learning ArcGIS map components, request handling, and GeoJSONLayer workflows.
 
 ## License
 
