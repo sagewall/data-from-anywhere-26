@@ -128,16 +128,18 @@ toggleDialogButton.addEventListener("click", () => {
 });
 
 // Handle view extent changes.
-viewElement.addEventListener("arcgisViewChange", () => {
+viewElement.addEventListener("arcgisViewChange", async () => {
   // Remove any stale forecast layer.
   removeExistingForecastLayer();
 
   // Refresh stations once the view is stationary.
   if (viewElement.stationary) {
     // Create or update the observation stations layer.
-    void createObservationStationsLayer().catch((error) => {
+    try {
+      await createObservationStationsLayer();
+    } catch (error) {
       console.error("Failed to create observation stations layer", error);
-    });
+    }
   }
 });
 
