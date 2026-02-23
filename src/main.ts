@@ -22,7 +22,7 @@ import "@esri/calcite-components/components/calcite-shell";
 import "@esri/calcite-components/components/calcite-tooltip";
 import "./style.css";
 
-// Type definition for API responses, which may include GeoJSON features and properties depending on the endpoint being called
+// API response shape from NWS endpoints.
 type ApiResponse = {
   data?: {
     features?: GeoJSONFeature[];
@@ -30,14 +30,13 @@ type ApiResponse = {
   };
 };
 
-// Type definition for cache entries, including the cached value and its expiration time
+// Generic cache entry with expiration.
 type CacheEntry<T> = {
   value: T;
   expiresAt: number;
 };
 
-// Type definition for GeoJSON features returned by the NWS API, which may include geometry with coordinates
-// and properties with various weather data depending on the endpoint
+// Minimal GeoJSON feature shape used by this app.
 type GeoJSONFeature = {
   geometry?: {
     coordinates?: unknown[];
@@ -45,18 +44,15 @@ type GeoJSONFeature = {
   properties?: Record<string, unknown>;
 };
 
-// Type definition for request errors, which may have various properties depending on how the error is thrown or returned
-// by the ArcGIS request function, including HTTP status codes in different locations and error messages
+// ArcGIS request error shape used by error handling.
 type RequestErrorLike = {
   details?: { httpStatus?: number };
   httpStatus?: number;
   message?: string;
   name?: string;
-  response?: { status?: number };
-  status?: number;
 };
 
-// Cache Time to Live and request timeout values in milliseconds
+// Cache Time to Live and request timeout values in milliseconds.
 const failedRequestCacheTimeToLive = 30 * 1000;
 const forecastCacheTimeToLive = 5 * 60 * 1000;
 const iconCacheTimeToLive = 30 * 60 * 1000;
@@ -67,13 +63,13 @@ const observationsCacheTimeToLive = 2 * 60 * 1000;
 const pointsStationsCacheTimeToLive = 10 * 60 * 1000;
 const requestTimeout = 8 * 1000;
 
-// Headers for API requests, including a User-Agent as required by the NWS API
+// Headers for API requests, including a User-Agent as required by the NWS API.
 const headers = {
   accept: "application/geo+json",
   "User-Agent": "data-from-anywhere-26",
 };
 
-// App state to hold references to layers, cache data, and in-flight request promises
+// App state for layers, caches, and in-flight requests.
 const state = {
   failedRequestCache: new Map<string, CacheEntry<boolean>>(),
   forecastCache: new Map<string, CacheEntry<ApiResponse>>(),
@@ -91,39 +87,39 @@ const state = {
   pointsCache: new Map<string, CacheEntry<ApiResponse>>(),
 };
 
-// Get a reference to the arcgis-feature element
+// Reference the arcgis-feature element.
 const featureElement = document.querySelector(
   "arcgis-feature",
 )! as HTMLArcgisFeatureElement;
 
-// Get a reference to the toggle dialog button
+// Reference the toggle dialog button.
 const toggleDialogButton = document.querySelector(
   "#toggle-dialog",
 ) as HTMLButtonElement;
 
-// Get a reference to the arcgis-map element
+// Reference the arcgis-map element.
 const viewElement = document.querySelector(
   "arcgis-map",
 )! as HTMLArcgisMapElement;
 
-// Create a WebMap instance
+// Create the WebMap instance.
 const webMap = new WebMap({
   basemap: "topo-vector",
 });
 
-// Set the map on the view element
+// Set the map on the view element.
 viewElement.map = webMap;
 
-// Wait for the view to be ready
+// Wait until the view is ready.
 await viewElement.viewOnReady();
 
-// Set zoom constraints
-viewElement.constraints.minZoom = 9;
-viewElement.constraints.maxZoom = 15;
+// Set zoom constraints.
+viewElement.constraints.minZoom = 11;
+viewElement.constraints.maxZoom = 11;
 
 // ---- Event Listeners ----
 
-// Add an event listener to the toggle dialog button to open or close the dialog when clicked
+// Toggle the dialog when the button is clicked.
 toggleDialogButton.addEventListener("click", () => {
   const dialog = document.getElementById("dialog") as HTMLCalciteDialogElement;
   if (dialog) {
@@ -131,81 +127,78 @@ toggleDialogButton.addEventListener("click", () => {
   }
 });
 
-// Event listener for when the view extent changes
+// Handle view extent changes.
 viewElement.addEventListener("arcgisViewChange", () => {
-  // Remove the existing forecast layer if it exists, as it may no longer be relevant to the new view extent
+  // Remove any stale forecast layer.
   removeExistingForecastLayer();
 
-  // If the view is stationary after the change
+  // Refresh stations once the view is stationary.
   if (viewElement.stationary) {
-    // Create or update the observation stations layer based on the new view center
+    // Create or update the observation stations layer.
     void createObservationStationsLayer().catch((error) => {
       console.error("Failed to create observation stations layer", error);
     });
   }
 });
 
-// Event listener for when the view is clicked
+// Handle map clicks.
 viewElement.addEventListener("arcgisViewClick", async (event) => {
-  // Get the map point from the click event
+  // Read the map point from the click event.
   const { mapPoint } = event.detail;
 
-  // Get the latitude and longitude from the map point
+  // Extract click coordinates.
   const { latitude, longitude } = mapPoint;
 
-  // If there's an existing forecast layer, remove it before adding a new one
+  // Remove any existing forecast layer.
   removeExistingForecastLayer();
 
-  // Perform a hit test to check if the click was on an existing station feature
+  // Hit test for existing station features.
   const hitTestResult = await viewElement.hitTest(event.detail, {
     include: viewElement.map?.layers.filter(
       (layer) => layer.title === "NWS Observation Stations",
     ),
   });
 
-  // If the click was on an existing station feature, do not add a new forecast layer or update the popup content,
-  // as the existing station's popup will handle that. Also, if latitude or longitude are missing or non-finite,
-  // do not proceed with the forecast request.
+  // Skip if a station feature was clicked or if coordinates are invalid.
   const clickedCoordinates = tryGetFiniteCoordinates(latitude, longitude);
   if (hitTestResult.results.length > 0 || !clickedCoordinates) {
     return;
   }
   const [clickedLatitude, clickedLongitude] = clickedCoordinates;
 
-  // Request forecast data for the clicked location
+  // Request forecast data for the clicked location.
   const forecast = await requestForecast(clickedLatitude, clickedLongitude);
 
-  // If the forecast data does not include the expected properties, do not proceed with creating the forecast layer or
-  // updating the popup content, as the necessary data is not available
+  // Stop if forecast properties are missing.
   if (!forecast?.data?.properties) {
     return;
   }
 
-  // Deep clone the forecast data to avoid mutating the original response
+  // Clone forecast data to avoid mutating the original response.
   const structuredForecastData = structuredClone(forecast.data);
 
-  // Process the properties of the forecast data to flatten nested objects and arrays
+  // Flatten nested forecast properties.
   structuredForecastData.properties = processProperties(
     forecast.data.properties,
   );
 
-  // Create a Blob from the processed data
+  // Create a Blob from the processed data.
   const blob = new Blob([JSON.stringify(structuredForecastData)], {
     type: "application/geo+json",
   });
 
-  // Create a URL for the Blob
+  // Create an object URL for the Blob.
   const url = URL.createObjectURL(blob);
 
-  // Revoke the previous forecast layer URL to free up memory, if it exists
+  // Revoke the previous forecast layer URL, if present.
   if (state.forecastLayerUrl) {
     URL.revokeObjectURL(state.forecastLayerUrl);
   }
 
-  // Update the state with the new forecast layer URL
+  // Save the new forecast layer URL.
   state.forecastLayerUrl = url;
 
-  // Create a new GeoJSONLayer for the forecast data and add it to the map
+  // Create the forecast GeoJSON layer.
   state.forecastLayer = new GeoJSONLayer({
     copyright: "NWS",
     popupEnabled: false,
@@ -253,43 +246,44 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
     url,
   });
 
-  // Add the forecast layer to the map
+  // Add the forecast layer to the map.
   viewElement.map?.layers.add(state.forecastLayer);
 
-  // Get the first graphic from the forecast layer and set it on the Feature element to display the popup content
+  // Display popup content using the first forecast graphic.
   const graphics = await state.forecastLayer.queryFeatures();
   const graphic = graphics.features[0];
+  if (!graphic) {
+    return;
+  }
   featureElement.graphic = graphic;
 });
 
 // ---- Functions ----
 
-// Function to check the status of an icon URL by performing a HEAD request with retries,
-// and caching the result to avoid redundant checks for the same URL in the future
+// Check an icon URL with retries and cache the result.
 async function checkIconStatus(url: string): Promise<boolean> {
   try {
     for (let attempt = 0; attempt < iconHeadCheckAttempts; attempt++) {
-      // Create an AbortController to enforce a timeout on the request
+      // Create an AbortController to enforce request timeout.
       const controller = new AbortController();
 
-      // Set a timeout to abort the request if it takes longer than the specified request timeout
+      // Abort the request if it exceeds the configured timeout.
       const timeoutId = window.setTimeout(() => {
         controller.abort();
       }, requestTimeout);
 
       try {
-        // Perform a HEAD request to the icon URL to check if it returns an HTTP 200 status
+        // Send a HEAD request to validate icon availability.
         await request(url, {
           method: "head",
           signal: controller.signal,
         });
 
-        // If the request succeeds, cache the successful result and return true
+        // Cache successful checks.
         setCachedValue(state.iconStatusCache, url, true, iconCacheTimeToLive);
         return true;
       } catch (error) {
-        // If the request fails, check if it's a 404 Not Found error or an abort error,
-        // and log it as a warning if it's not one of those expected error types
+        // Only warn for unexpected failures (not 404 / abort).
         const requestError = error as RequestErrorLike;
         const isAbortError =
           requestError?.name === "AbortError" ||
@@ -299,17 +293,17 @@ async function checkIconStatus(url: string): Promise<boolean> {
           console.warn(`Icon availability check failed for ${url}`, error);
         }
       } finally {
-        // Clear the timeout to avoid unnecessary aborts if the request completed in time
+        // Clear timeout after the request completes.
         window.clearTimeout(timeoutId);
       }
 
-      // If the request failed or did not return a 200 status, wait for a specified delay before retrying,
+      // Delay before retrying.
       if (attempt < iconHeadCheckAttempts - 1) {
         await wait(iconHeadRetryDelay);
       }
     }
 
-    // If all attempts failed, cache the failure result and return false
+    // Cache failed checks after all retry attempts.
     setCachedValue(
       state.iconStatusCache,
       url,
@@ -318,18 +312,18 @@ async function checkIconStatus(url: string): Promise<boolean> {
     );
     return false;
   } finally {
-    // Remove the in-flight check for this URL from the state to allow future checks if needed
+    // Clear in-flight icon check state.
     state.inFlightIconChecks.delete(url);
   }
 }
 
-// Function to create the observation stations layer based on the current view center
+// Create the observation stations layer from the current view center.
 async function createObservationStationsLayer(): Promise<void> {
-  // Get the latitude and longitude of the view center
+  // Read center coordinates.
   const centerLatitude = viewElement.center?.latitude;
   const centerLongitude = viewElement.center?.longitude;
 
-  // Validate that the center coordinates are defined finite numbers before proceeding with requests
+  // Validate center coordinates before requesting data.
   const centerCoordinates = tryGetFiniteCoordinates(
     centerLatitude,
     centerLongitude,
@@ -340,7 +334,7 @@ async function createObservationStationsLayer(): Promise<void> {
   }
   const [validatedCenterLatitude, validatedCenterLongitude] = centerCoordinates;
 
-  // Create a unique key for the current view center to determine if we need to request new observation stations data
+  // Build a key for deduplicating center-based station refreshes.
   const observationStationsKey = `${normalizeCoordinate(validatedCenterLatitude)},${normalizeCoordinate(validatedCenterLongitude)}`;
   if (
     observationStationsKey === state.lastObservationStationsKey ||
@@ -349,11 +343,11 @@ async function createObservationStationsLayer(): Promise<void> {
     return;
   }
 
-  // Set the in-flight key to prevent duplicate requests for the same view center while the current request is still in progress
+  // Mark this center key as in flight.
   state.inFlightObservationStationsKey = observationStationsKey;
 
   try {
-    // Request NWS points data for the current view center
+    // Request NWS points for the current center.
     const nwsPoints = await requestPoints(
       validatedCenterLatitude,
       validatedCenterLongitude,
@@ -361,29 +355,28 @@ async function createObservationStationsLayer(): Promise<void> {
     const observationStationsUrlValue =
       nwsPoints?.data?.properties?.observationStations;
 
-    // If the NWS points data does not include an observation stations URL, do not proceed
+    // Stop if points data does not include a stations URL.
     if (
       typeof observationStationsUrlValue !== "string" ||
       !observationStationsUrlValue
     ) {
       return;
     }
-    const observationStationsUrl = observationStationsUrlValue;
 
-    // Request observation stations using the URL from the NWS points data
+    // Request observation stations from the points response URL.
     const observationStations = await requestObservationStations(
-      observationStationsUrl,
+      observationStationsUrlValue,
     );
 
-    // If the observation stations data does not include features, do not proceed
+    // Stop if station features are missing.
     if (!observationStations?.data?.features) {
       return;
     }
 
-    // Deep clone the data to avoid mutating the original response
+    // Clone station data to avoid mutating the original response.
     const structuredStationData = structuredClone(observationStations.data);
 
-    // Process each feature to get latest observations and forecast data
+    // Enrich each feature with latest observations and forecast data.
     const stationFeatures = structuredStationData.features;
     if (!Array.isArray(stationFeatures)) {
       return;
@@ -392,13 +385,13 @@ async function createObservationStationsLayer(): Promise<void> {
     const allFeaturePromises = stationFeatures.map(
       async (feature: GeoJSONFeature) => {
         try {
-          // Get the station identifier, latitude, and longitude from the feature properties and geometry
+          // Read station identifier and feature coordinates.
           const stationIdentifier = String(
             feature?.properties?.stationIdentifier ?? "",
           ).trim();
           const [longitude, latitude] = feature?.geometry?.coordinates ?? [];
 
-          // If the station identifier is not defined, skip processing this feature
+          // Skip features without a station identifier.
           if (!stationIdentifier) {
             console.warn(
               "Skipping feature with missing stationIdentifier",
@@ -407,7 +400,7 @@ async function createObservationStationsLayer(): Promise<void> {
             return;
           }
 
-          // Request the latest observations and forecast data in parallel for the station
+          // Request latest observations and forecast in parallel.
           const featureCoordinates = tryGetFiniteCoordinates(
             Number(latitude),
             Number(longitude),
@@ -421,15 +414,14 @@ async function createObservationStationsLayer(): Promise<void> {
             ],
           );
 
-          // Process the properties of the observations and forecast data to flatten nested objects and arrays,
-          // and merge them into the feature properties, with the original feature properties taking precedence in case of conflicts
+          // Flatten and merge observation and forecast properties into the feature.
           feature.properties = processProperties({
             ...feature.properties,
             ...(observationProperties?.data?.properties ?? {}),
             ...(forecastProperties?.data?.properties ?? {}),
           });
         } catch (error) {
-          // Log any errors that occur during the processing of each feature, but continue processing the remaining features
+          // Log feature-level errors and continue processing.
           const failedStationIdentifier = String(
             feature?.properties?.stationIdentifier ?? "unknown",
           );
@@ -441,26 +433,26 @@ async function createObservationStationsLayer(): Promise<void> {
       },
     );
 
-    // Wait for all feature data to be requested and processed
+    // Wait for all feature enrichment to finish.
     await Promise.all(allFeaturePromises);
 
-    // Create a Blob from the processed data
+    // Create a Blob from the processed data.
     const blob = new Blob([JSON.stringify(structuredStationData)], {
       type: "application/geo+json",
     });
 
-    // Create a URL for the Blob
+    // Create an object URL for the Blob.
     const url = URL.createObjectURL(blob);
 
-    // Revoke the previous observation stations layer URL to free up memory, if it exists
+    // Revoke the previous stations layer URL, if present.
     if (state.observationStationsLayerUrl) {
       URL.revokeObjectURL(state.observationStationsLayerUrl);
     }
 
-    // Update the state with the new observation stations layer URL
+    // Save the new stations layer URL.
     state.observationStationsLayerUrl = url;
 
-    // Create a new GeoJSONLayer with the processed data
+    // Create a GeoJSON layer from the processed stations data.
     const observationStationsLayer = new GeoJSONLayer({
       copyright: "NWS",
       popupEnabled: true,
@@ -499,71 +491,67 @@ async function createObservationStationsLayer(): Promise<void> {
       url,
     });
 
-    // Create a renderer for the observation stations layer and set custom symbols based on the current conditions icon URL
+    // Create a renderer for observation stations.
     const { renderer } = await createRenderer({
       field: "icon",
       layer: observationStationsLayer,
       view: viewElement.view,
     });
 
-    // Map each unique value info to a new symbol created from the icon URL
-    // after validating that the URL returns an HTTP 200 status,
-    // and filter out any unique value infos that do not have a valid icon URL
-    // to avoid broken image symbols on the map
+    // Build symbols for valid icon URLs and drop invalid entries.
     const uniqueValueInfos = renderer.uniqueValueInfos ?? [];
     renderer.uniqueValueInfos = (
       await Promise.all(
         uniqueValueInfos.map(async (info) => {
-          // Get the icon URL from the value of the unique value info
+          // Read icon URL from the unique value.
           const iconUrl = String(info.value ?? "").trim();
 
-          // Check if the icon URL is valid and returns an HTTP 200 status before creating a symbol for it,
-          // to avoid broken image symbols on the map
+          // Only create symbols for icon URLs that respond with HTTP 200.
           const iconIsAvailable = await isHttp200(iconUrl);
 
           if (!iconIsAvailable) {
             return null;
           }
 
-          // Create a new symbol for the unique value info using the icon URL and set it on the info object
+          // Assign a CIM symbol based on the icon URL.
           info.symbol = createObservationStationsSymbol(iconUrl);
           return info;
         }),
       )
     ).filter((info): info is NonNullable<typeof info> => info !== null);
 
-    // Add a default symbol for features without a valid current conditions icon URL
+    // Use a default symbol when no valid icon URL is available.
     renderer.defaultSymbol = new WebStyleSymbol({
       name: "Radio Tower_Large_3",
       styleUrl:
         "https://www.arcgis.com/sharing/rest/content/items/37da62fcdb854f8e8305c79e8b5023dc/data",
     });
 
-    // Set the renderer on the observation stations layer
+    // Assign the renderer to the stations layer.
     observationStationsLayer.renderer = renderer;
 
-    // If there's an existing observation stations layer, remove it before adding the new one
+    // Remove any previous stations layer.
     if (state.observationStationsLayer) {
       viewElement.map?.layers.remove(state.observationStationsLayer);
     }
 
-    // Update the state with the new layer reference
+    // Save the new layer reference.
     state.observationStationsLayer = observationStationsLayer;
 
-    // Add the new layer to the map
+    // Add the new layer to the map.
     viewElement.map?.layers.add(state.observationStationsLayer);
 
-    // Mark this key as successfully refreshed only after the layer has been built and added
+    // Mark this center key as refreshed after layer creation succeeds.
     state.lastObservationStationsKey = observationStationsKey;
   } finally {
+    // Clear the in-flight key only if this invocation still owns it.
     if (state.inFlightObservationStationsKey === observationStationsKey) {
       state.inFlightObservationStationsKey = "";
     }
   }
 }
 
-// Function for creating a CIMSymbol for observation stations
-// using the current conditions icon URL
+// Create a CIM symbol for observation stations from an icon URL.
 function createObservationStationsSymbol(url: string): CIMSymbol {
   return new CIMSymbol({
     data: {
@@ -674,99 +662,83 @@ function createObservationStationsSymbol(url: string): CIMSymbol {
   });
 }
 
-// Function to get a cached value from a cache Map,
-// checking for expiration and returning null if the entry is not found or has expired
+// Read a cached value and evict expired entries.
 function getCachedValue<T>(
   cache: Map<string, CacheEntry<T>>,
   key: string,
 ): T | null {
-  // Check if there's a cache entry for the given key
+  // Read the cache entry for the key.
   const entry = cache.get(key);
   if (!entry) {
     return null;
   }
 
-  // If the cache entry has expired, delete it from the cache and return null
+  // Evict expired entries.
   if (Date.now() >= entry.expiresAt) {
     cache.delete(key);
     return null;
   }
 
-  // If the cache entry is valid, return its value
+  // Return the cached value.
   return entry.value;
 }
 
-// Function to check if a given URL returns an HTTP 200 status,
-// with caching to avoid redundant network requests for the same URL
+// Check whether a URL returns HTTP 200, with caching.
 async function isHttp200(url: string): Promise<boolean> {
-  // If the URL is not defined, return false
+  // Reject empty URLs.
   if (!url) {
     return false;
   }
 
-  // Only attempt to check URLs that start with http:// or https://
-  // to avoid unnecessary requests for invalid URLs
+  // Only check absolute HTTP(S) URLs.
   if (!url.startsWith("http://") && !url.startsWith("https://")) {
     return false;
   }
 
-  // Check the cache first to see if we have a recent result for this URL
+  // Return cached status when available.
   const cached = getCachedValue(state.iconStatusCache, url);
   if (cached !== null) {
     return cached;
   }
 
-  // If there's an in-flight check for this URL, return the existing promise to avoid duplicate checks
+  // Reuse any in-flight check for this URL.
   const inFlight = state.inFlightIconChecks.get(url);
   if (inFlight) {
     return inFlight;
   }
 
-  // Perform a HEAD request to the URL to check if it returns an HTTP 200 status
+  // Start a new icon status check.
   const checkPromise = checkIconStatus(url);
 
-  // Store the in-flight check promise in the state to deduplicate concurrent checks for the same URL
+  // Track the in-flight check for deduplication.
   state.inFlightIconChecks.set(url, checkPromise);
 
-  // Return the promise that will resolve to true if the URL returns an HTTP 200 status, or false otherwise
+  // Return the shared check promise.
   return checkPromise;
 }
 
-// Function to determine if an error is a 404 Not Found error by checking various properties
-// of the error object, including HTTP status codes and message content, to avoid logging
-// expected 404 errors as actual errors in the console
+// Determine if an error represents HTTP 404.
 function isNotFoundError(error: unknown): boolean {
-  // Check various properties of the error object to determine if it indicates a 404 Not Found error
+  // Read status details from the request error.
   const requestError = error as RequestErrorLike;
-  const status =
-    requestError?.details?.httpStatus ??
-    requestError?.response?.status ??
-    requestError?.status ??
-    requestError?.httpStatus;
+  const status = requestError?.details?.httpStatus ?? requestError?.httpStatus;
 
-  // If any of the status properties indicate a 404 status, return true
-  if (Number(status) === 404) {
-    return true;
-  }
-
-  // As a fallback, check if the error message contains "404"
-  // to catch any cases where the status code is not available in a standard property
-  return /\b404\b/.test(String(requestError?.message ?? ""));
+  // Return true if status is 404 or, as a fallback, if message contains "404".
+  return status === 404 || /\b404\b/.test(String(requestError?.message ?? ""));
 }
 
-// Function to normalize coordinate values to a fixed number of decimal places for consistent cache keys
+// Normalize coordinates for stable cache keys.
 function normalizeCoordinate(value: number): string {
   return value.toFixed(4);
 }
 
-// Function to perform the actual network request and update request bookkeeping.
-// Called by requestWithDeduplication after it handles deduplication checks.
+// Perform a network request and maintain request bookkeeping.
 async function performRequest(
   cacheKey: string,
   url: string,
 ): Promise<ApiResponse | null> {
   try {
-    // Perform the network request to the specified URL with the defined headers and timeout
+    // Execute the JSON request with configured headers and timeout.
     const response = await request(url, {
       headers,
       responseType: "json",
@@ -775,7 +747,7 @@ async function performRequest(
     state.failedRequestCache.delete(cacheKey);
     return response;
   } catch (error) {
-    // If the request fails, cache the failure state for this key to avoid immediate retries in the near future
+    // Cache recent failures to avoid immediate retries.
     setCachedValue(
       state.failedRequestCache,
       cacheKey,
@@ -783,27 +755,29 @@ async function performRequest(
       failedRequestCacheTimeToLive,
     );
 
-    // Log the error unless it's a 404, which is treated as a non-actionable miss
+    // Log non-404 failures.
     if (!isNotFoundError(error)) {
       console.error(`Request failed for ${url}`, error);
     }
     return null;
   } finally {
-    // Remove the in-flight request for this URL from the state to allow future requests if needed
+    // Clear in-flight state for this key.
     state.inFlightRequests.delete(cacheKey);
   }
 }
 
-// Function to create custom popup content for forecast and observation station features
+// Create custom popup content for forecast and station features.
 function popupContentCreator(
   event: PopupTemplateCreatorEvent,
 ): HTMLCalciteListElement {
-  // Get the attributes from the graphic associated with the popup event
+  // Read attributes from the popup graphic.
   const attributes = event.graphic.attributes;
+  // Coerce unknown values to finite numbers for safe math and formatting.
   const toFiniteNumber = (value: unknown): number | null => {
     const parsedNumber = Number(value);
     return Number.isFinite(parsedNumber) ? parsedNumber : null;
   };
+  // Coerce unknown values to trimmed strings and normalize null/undefined to empty.
   const toNonEmptyString = (value: unknown): string => {
     if (value == null) {
       return "";
@@ -811,11 +785,10 @@ function popupContentCreator(
     return String(value).trim();
   };
 
-  // Create a calcite-list element to hold the popup content
+  // Build the list container.
   const list = document.createElement("calcite-list");
 
-  // If the attributes include current conditions data (temperature or text description),
-  // create a list item for the current conditions
+  // Add current conditions when temperature or description is available.
   const temperatureValue = toFiniteNumber(attributes.temperature_value);
   const textDescription = toNonEmptyString(attributes.textDescription);
   if (temperatureValue !== null || textDescription) {
@@ -824,11 +797,10 @@ function popupContentCreator(
     currentConditionsListItem.label = "Current Conditions";
     const temperature =
       temperatureValue !== null ? (temperatureValue * 9) / 5 + 32 : null;
-    const description = `${textDescription ? textDescription + " " : "Unknown "}${temperature ? temperature.toFixed(1) + " °F" : ""}`;
+    const description = `${textDescription ? textDescription + " " : "Unknown "}${temperature !== null ? temperature.toFixed(1) + " °F" : ""}`;
     currentConditionsListItem.description = description;
 
-    // If there's an icon URL for the current conditions,
-    // create an img element and add it to the list item
+    // Add the current-conditions icon when available.
     const currentConditionIcon = toNonEmptyString(attributes.icon);
     if (currentConditionIcon) {
       const img = document.createElement("img");
@@ -841,12 +813,11 @@ function popupContentCreator(
       currentConditionsListItem.appendChild(img);
     }
 
-    // Add the current conditions list item to the top of the list
+    // Add current conditions to the list.
     list.appendChild(currentConditionsListItem);
   }
 
-  // Loop through the forecast periods (up to 6) and create a list item for each period with its name,
-  // detailed forecast, and icon if available, then add it to the list
+  // Add up to six forecast period items.
   for (let i = 0; i < 6; i++) {
     const periodName = toNonEmptyString(attributes[`periods_${i}_name`]);
     const periodForecast = toNonEmptyString(
@@ -870,19 +841,19 @@ function popupContentCreator(
     list.appendChild(forecastListItem);
   }
 
-  // Return the populated list element to be used as the custom content for the popup
+  // Return the populated list.
   return list;
 }
 
-// Recursive function to process properties as some are nested objects or arrays
+// Recursively flatten nested object and array properties.
 function processProperties(
   object: Record<string, unknown>,
   prefix = "",
 ): Record<string, string> {
-  // Create a new result object to hold the processed properties
+  // Accumulate flattened key-value pairs.
   const result: Record<string, string> = {};
 
-  // Loop through each key-value pair in the input object and process them based on their type
+  // Flatten each key-value pair based on value type.
   for (const [key, value] of Object.entries(object)) {
     const newKey = prefix ? `${prefix}_${key}` : key;
     if (Array.isArray(value)) {
@@ -909,22 +880,28 @@ function processProperties(
     }
   }
 
-  // Return the processed result object with flattened properties
+  // Return flattened properties.
   return result;
 }
 
 function removeExistingForecastLayer(): void {
-  // If there's an existing forecast layer, remove it before adding a new one
+  // Remove any existing forecast layer.
   if (state.forecastLayer) {
     viewElement.map?.layers.remove(state.forecastLayer);
     state.forecastLayer = null;
   }
 
-  // Clear the graphic from the Feature element to reset the popup content
+  // Release any previous object URL backing the forecast layer.
+  if (state.forecastLayerUrl) {
+    URL.revokeObjectURL(state.forecastLayerUrl);
+    state.forecastLayerUrl = "";
+  }
+
+  // Clear popup graphic state.
   featureElement.graphic = null;
 }
 
-// Function to request forecast data from latitude and longitude
+// Request forecast data by latitude/longitude.
 async function requestForecast(
   latitude: number,
   longitude: number,
@@ -935,27 +912,24 @@ async function requestForecast(
   }
   const [validatedLatitude, validatedLongitude] = coordinates;
 
-  // Request the NWS Points data for the given latitude and longitude to get the forecast URL,
-  // and if successful, use that URL to request the forecast data
+  // Request points data, then read the forecast URL.
   const points = await requestPoints(validatedLatitude, validatedLongitude);
   const forecastUrlValue = points?.data?.properties?.forecast;
 
-  // If the forecast URL is not defined in the Points response,
-  // return null as we cannot proceed with the forecast request
+  // Stop when points response has no forecast URL.
   if (typeof forecastUrlValue !== "string" || !forecastUrlValue) {
     return null;
   }
-  const forecastUrl = forecastUrlValue;
 
-  // Request the forecast data directly from the forecast URL and return the response
-  return requestForecastByUrl(forecastUrl);
+  // Request forecast data by URL.
+  return requestForecastByUrl(forecastUrlValue);
 }
 
-// Function to request forecast data directly from a forecast URL
+// Request forecast data by URL.
 async function requestForecastByUrl(
   forecastUrl: string,
 ): Promise<ApiResponse | null> {
-  // If the forecast URL is not defined, return null
+  // Reject empty forecast URLs.
   if (!forecastUrl) {
     return null;
   }
@@ -969,16 +943,16 @@ async function requestForecastByUrl(
   );
 }
 
-// Function to request latest observations for a station
+// Request latest observations for a station.
 async function requestLatestObservations(
   stationIdentifier: string,
 ): Promise<ApiResponse | null> {
-  // If the station identifier is not defined, return null
+  // Reject empty station identifiers.
   if (!stationIdentifier) {
     return null;
   }
 
-  // Construct the URL for the latest observations endpoint using the station identifier
+  // Build the latest observations URL.
   const url = `https://api.weather.gov/stations/${stationIdentifier}/observations/latest`;
 
   const cacheKey = `observations:${stationIdentifier}`;
@@ -990,11 +964,11 @@ async function requestLatestObservations(
   );
 }
 
-// Function to request observation stations from NWS Points data
+// Request observation stations from a points-derived URL.
 async function requestObservationStations(
   observationStationsUrl: string,
 ): Promise<ApiResponse | null> {
-  // If the observation stations URL is not defined, return null
+  // Reject empty stations URLs.
   if (!observationStationsUrl) {
     return null;
   }
@@ -1008,7 +982,7 @@ async function requestObservationStations(
   );
 }
 
-// Function to request NWS Points data based on latitude and longitude
+// Request NWS points data by latitude/longitude.
 async function requestPoints(
   latitude: number,
   longitude: number,
@@ -1019,7 +993,7 @@ async function requestPoints(
   }
   const [validatedLatitude, validatedLongitude] = coordinates;
 
-  // Normalize the latitude and longitude to a fixed number of decimal places to create a consistent cache key,
+  // Normalize coordinates for a stable cache key.
   const normalizedLatitude = normalizeCoordinate(validatedLatitude);
   const normalizedLongitude = normalizeCoordinate(validatedLongitude);
   const cacheKey = `points:${normalizedLatitude},${normalizedLongitude}`;
@@ -1032,18 +1006,20 @@ async function requestPoints(
   );
 }
 
-// Function to perform a cached request flow for endpoint responses
+// Resolve a request via cache + deduplicated network fallback.
 async function requestWithCache(
   cache: Map<string, CacheEntry<ApiResponse>>,
   cacheKey: string,
   url: string,
   ttlMs: number,
 ): Promise<ApiResponse | null> {
+  // Return a fresh cached response when available.
   const cached = getCachedValue(cache, cacheKey);
   if (cached !== null) {
     return cached;
   }
 
+  // Otherwise request the resource and cache successful responses.
   const response = await requestWithDeduplication(cacheKey, url);
   if (response) {
     setCachedValue(cache, cacheKey, response, ttlMs);
@@ -1052,40 +1028,34 @@ async function requestWithCache(
   return response;
 }
 
-// Function to perform a request with deduplication based on a cache key,
-// ensuring that only one request is made for the same key at a time,
-// while callers handle response caching for their specific data types
+// Deduplicate concurrent requests by cache key.
 async function requestWithDeduplication(
   cacheKey: string,
   url: string,
 ): Promise<ApiResponse | null> {
-  // If this key recently failed, skip an immediate retry and return null
+  // Skip immediate retry for recently failed keys.
   const recentlyFailed = getCachedValue(state.failedRequestCache, cacheKey);
   if (recentlyFailed === true) {
     return null;
   }
 
-  // If there's an in-flight request for the given cache key,
-  // return the existing promise to avoid duplicate requests
+  // Reuse existing in-flight request promises.
   const inFlight = state.inFlightRequests.get(cacheKey);
   if (inFlight) {
     return inFlight;
   }
 
-  // Perform the underlying network request
+  // Start the underlying network request.
   const requestPromise = performRequest(cacheKey, url);
 
-  // Store the in-flight request promise in the state to deduplicate concurrent requests
-  // for the same cache key
+  // Track in-flight request for this key.
   state.inFlightRequests.set(cacheKey, requestPromise);
 
-  // Return the promise that will resolve to the response data if the request is successful,
-  // or null if it fails
+  // Return the shared request promise.
   return requestPromise;
 }
 
-// Function to set a value in a cache Map with an associated TTL,
-// storing the value along with its expiration time
+// Cache a value with a TTL.
 function setCachedValue<T>(
   cache: Map<string, CacheEntry<T>>,
   key: string,
@@ -1098,7 +1068,7 @@ function setCachedValue<T>(
   });
 }
 
-// Function to validate and normalize coordinate inputs for downstream requests
+// Validate coordinate inputs and return normalized numbers.
 function tryGetFiniteCoordinates(
   latitude: number | null | undefined,
   longitude: number | null | undefined,
@@ -1110,8 +1080,7 @@ function tryGetFiniteCoordinates(
   return [Number(latitude), Number(longitude)];
 }
 
-// Function to create a delay for a specified number of milliseconds,
-// used for retrying requests after a delay
+// Sleep for the provided number of milliseconds.
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
