@@ -12,6 +12,7 @@ import WebStyleSymbol from "@arcgis/core/symbols/WebStyleSymbol";
 import "@arcgis/map-components/components/arcgis-feature";
 import "@arcgis/map-components/components/arcgis-map";
 import "@arcgis/map-components/components/arcgis-search";
+import "@arcgis/map-components/components/arcgis-zoom";
 import "@esri/calcite-components/components/calcite-action";
 import "@esri/calcite-components/components/calcite-alert";
 import "@esri/calcite-components/components/calcite-dialog";
