@@ -144,7 +144,10 @@ viewElement.addEventListener("arcgisViewChange", () => {
 // Handle map clicks.
 viewElement.addEventListener("arcgisViewClick", async (event) => {
   // Read the map point from the click event.
-  const { mapPoint } = event.detail;
+  const mapPoint = event.detail.mapPoint;
+  if (!mapPoint) {
+    return;
+  }
 
   // Extract click coordinates.
   const { latitude, longitude } = mapPoint;
@@ -685,33 +688,38 @@ function getCachedValue<T>(
 
 // Check whether a URL returns HTTP 200, with caching.
 async function isHttp200(url: string): Promise<boolean> {
+  const normalizedUrl = url.trim();
+
   // Reject empty URLs.
-  if (!url) {
+  if (!normalizedUrl) {
     return false;
   }
 
   // Only check absolute HTTP(S) URLs.
-  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+  if (
+    !normalizedUrl.startsWith("http://") &&
+    !normalizedUrl.startsWith("https://")
+  ) {
     return false;
   }
 
   // Return cached status when available.
-  const cached = getCachedValue(state.iconStatusCache, url);
+  const cached = getCachedValue(state.iconStatusCache, normalizedUrl);
   if (cached !== null) {
     return cached;
   }
 
   // Reuse any in-flight check for this URL.
-  const inFlight = state.inFlightIconChecks.get(url);
+  const inFlight = state.inFlightIconChecks.get(normalizedUrl);
   if (inFlight) {
     return inFlight;
   }
 
   // Start a new icon status check.
-  const checkPromise = checkIconStatus(url);
+  const checkPromise = checkIconStatus(normalizedUrl);
 
   // Track the in-flight check for deduplication.
-  state.inFlightIconChecks.set(url, checkPromise);
+  state.inFlightIconChecks.set(normalizedUrl, checkPromise);
 
   // Return the shared check promise.
   return checkPromise;
@@ -724,7 +732,10 @@ function isNotFoundError(error: unknown): boolean {
   const status = requestError?.details?.httpStatus ?? requestError?.httpStatus;
 
   // Return true if status is 404 or, as a fallback, if message contains "404".
-  return status === 404 || /\b404\b/.test(String(requestError?.message ?? ""));
+  return (
+    Number(status) === 404 ||
+    /\b404\b/.test(String(requestError?.message ?? ""))
+  );
 }
 
 // Normalize coordinates for stable cache keys.
@@ -929,16 +940,18 @@ async function requestForecast(
 async function requestForecastByUrl(
   forecastUrl: string,
 ): Promise<ApiResponse | null> {
+  const normalizedForecastUrl = forecastUrl.trim();
+
   // Reject empty forecast URLs.
-  if (!forecastUrl) {
+  if (!normalizedForecastUrl) {
     return null;
   }
 
-  const cacheKey = `forecast:${forecastUrl}`;
+  const cacheKey = `forecast:${normalizedForecastUrl}`;
   return requestWithCache(
     state.forecastCache,
     cacheKey,
-    forecastUrl,
+    normalizedForecastUrl,
     forecastCacheTimeToLive,
   );
 }
@@ -947,15 +960,17 @@ async function requestForecastByUrl(
 async function requestLatestObservations(
   stationIdentifier: string,
 ): Promise<ApiResponse | null> {
+  const normalizedStationIdentifier = stationIdentifier.trim();
+
   // Reject empty station identifiers.
-  if (!stationIdentifier) {
+  if (!normalizedStationIdentifier) {
     return null;
   }
 
   // Build the latest observations URL.
-  const url = `https://api.weather.gov/stations/${stationIdentifier}/observations/latest`;
+  const url = `https://api.weather.gov/stations/${normalizedStationIdentifier}/observations/latest`;
 
-  const cacheKey = `observations:${stationIdentifier}`;
+  const cacheKey = `observations:${normalizedStationIdentifier}`;
   return requestWithCache(
     state.latestObservationsCache,
     cacheKey,
@@ -968,16 +983,18 @@ async function requestLatestObservations(
 async function requestObservationStations(
   observationStationsUrl: string,
 ): Promise<ApiResponse | null> {
+  const normalizedObservationStationsUrl = observationStationsUrl.trim();
+
   // Reject empty stations URLs.
-  if (!observationStationsUrl) {
+  if (!normalizedObservationStationsUrl) {
     return null;
   }
 
-  const cacheKey = `stations:${observationStationsUrl}`;
+  const cacheKey = `stations:${normalizedObservationStationsUrl}`;
   return requestWithCache(
     state.observationStationsCache,
     cacheKey,
-    observationStationsUrl,
+    normalizedObservationStationsUrl,
     pointsStationsCacheTimeToLive,
   );
 }
