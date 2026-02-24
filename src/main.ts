@@ -8,7 +8,6 @@ import request from "@arcgis/core/request.js";
 import { createRenderer } from "@arcgis/core/smartMapping/renderers/type.js";
 import CIMSymbol from "@arcgis/core/symbols/CIMSymbol";
 import SimpleFillSymbol from "@arcgis/core/symbols/SimpleFillSymbol.js";
-import WebStyleSymbol from "@arcgis/core/symbols/WebStyleSymbol";
 import "@arcgis/map-components/components/arcgis-feature";
 import "@arcgis/map-components/components/arcgis-map";
 import "@arcgis/map-components/components/arcgis-search";
@@ -581,11 +580,9 @@ async function createObservationStationsLayer(): Promise<void> {
     ).filter((info): info is NonNullable<typeof info> => info !== null);
 
     // Use a default symbol when no valid icon URL is available.
-    renderer.defaultSymbol = new WebStyleSymbol({
-      name: "Radio Tower_Large_3",
-      styleUrl:
-        "https://www.arcgis.com/sharing/rest/content/items/37da62fcdb854f8e8305c79e8b5023dc/data",
-    });
+    renderer.defaultSymbol = createObservationStationsSymbol(
+      "https://sagewall.github.io/test-images/weather-station.png",
+    );
 
     // Assign the renderer to the stations layer.
     observationStationsLayer.renderer = renderer;
