@@ -283,9 +283,9 @@ viewElement.addEventListener("arcgisViewClick", async (event) => {
     },
     renderer: new SimpleRenderer({
       symbol: new SimpleFillSymbol({
-        color: new Color([255, 0, 0, 0.25]),
+        color: new Color([22, 93, 182, 0.25]),
         outline: {
-          color: new Color([255, 0, 0]),
+          color: new Color([22, 93, 182]),
           width: 1,
         },
       }),
