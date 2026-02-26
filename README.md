@@ -92,7 +92,7 @@ npm run build
 
 ## License
 
-This demo is for educational purposes at the Esri Developer & Technology Summit.
+Apache License, Version 2.0
 
 ## Acknowledgments
 
